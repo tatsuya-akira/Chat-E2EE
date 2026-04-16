@@ -32,7 +32,7 @@
   - Sử dụng `DotNetEnv` để nạp các thông tin nhạy cảm như Firebase ApiKey, AuthDomain hoặc MySQL Connection String.
   - Ẩn file môi trường qua `.gitignore` trước khi commit lên repository.
 
-## 5. Quản lý Trò chuyện & Cài đặt (Nâng cao)
+## 5. Quản lý Trò chuyện & Cài đặt 
 - **Giao diện Chat chi tiết (`ChatWindow.xaml`)**:
   - Binding cấu trúc dữ liệu (`ChatModel`, `MessageModel`) để hiển thị động (MVVM - ObservableCollection).
   - Phân biệt tự động tin nhắn của "Bản thân" (lề phải, màu xanh) và "Người gửi khác" (lề trái) thông qua `BooleanToVisibilityInverseConverter`.
