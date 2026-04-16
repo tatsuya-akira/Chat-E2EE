@@ -13,7 +13,7 @@
 - **Bắt lỗi xác thực**: Tùy chỉnh thông báo lỗi tiếng Việt khi nhập sai mật khẩu, email đã tồn tại, hoặc tài khoản chưa được đăng ký.
 
 ## 3. Quản lý Cơ sở dữ liệu (MySQL)
-- **Kết nối CSDL**: Sử dụng `MySql.Data` để kết nối với cơ sở dữ liệu `hermes_db`.
+- **Kết nối CSDL**: Sử dụng `MySql` để kết nối với cơ sở dữ liệu `hermes_db`.
 - **Thiết kế CSDL (`hermes_db.sql`)**:
   - Bảng `Users` lưu trữ `Id` (Firebase UID) và `Email`.
   - Bảng `Info` lưu trữ `FullName` (Tên hiển thị), `AvatarUrl` và `StatusMessage`, có liên kết khóa ngoại (Foreign Key) với bảng `Users`.
