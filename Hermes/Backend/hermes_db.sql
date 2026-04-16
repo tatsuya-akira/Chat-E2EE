@@ -1,0 +1,20 @@
+CREATE DATABASE IF NOT EXISTS hermes_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE hermes_db;
+
+-- Tạo bảng Users
+CREATE TABLE IF NOT EXISTS Users (
+    Id VARCHAR(100) PRIMARY KEY,
+    Email VARCHAR(255) NOT NULL UNIQUE,
+    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tạo bảng Info với khóa ngoại liên kết tới Users
+CREATE TABLE IF NOT EXISTS Info (
+    UserId VARCHAR(100) PRIMARY KEY,
+    FullName VARCHAR(255) NOT NULL,
+    AvatarUrl VARCHAR(500) DEFAULT NULL,
+    StatusMessage VARCHAR(255) DEFAULT NULL,
+    FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+);
+
+ALTER TABLE Info ADD CONSTRAINT UQ_FullName UNIQUE (FullName);

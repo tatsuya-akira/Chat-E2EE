@@ -1,10 +1,14 @@
-﻿<Window x:Class="demo.ChatWindow"
+﻿<Window x:Class="Hermes.ChatWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:Hermes.Converters"
         Title="Hermes - Tin nhắn được bảo mật đầu cuối" Height="650" Width="1000"
         WindowStartupLocation="CenterScreen" Background="#F9FAFB">
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        <conv:BooleanToVisibilityInverseConverter x:Key="BooleanToVisibilityInverseConverter"/>
+
         <Style TargetType="TextBox" x:Key="ModernTextBox">
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="BorderBrush" Value="#D1D5DB"/>
@@ -91,48 +95,34 @@
                 <Grid Grid.Row="0" Margin="10,10,10,20">
                     <TextBlock Text="Hermes Chats" FontSize="22" FontWeight="Bold" Foreground="#1F2937" VerticalAlignment="Center"/>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                        <Button Content="➕" Background="Transparent" BorderThickness="0" FontSize="16" Cursor="Hand" Margin="0,0,10,0" ToolTip="Tạo nhóm mới"/>
-                        <Button Content="⚙️" Background="Transparent" BorderThickness="0" FontSize="18" Cursor="Hand" ToolTip="Cài đặt"/>
+                        <Button Click="btnAddChat_Click" Content="➕" Background="Transparent" BorderThickness="0" FontSize="16" Cursor="Hand" Margin="0,0,10,0" ToolTip="Tạo nhóm mới"/>
+                        <Button Click="btnSettings_Click" Content="⚙️" Background="Transparent" BorderThickness="0" FontSize="18" Cursor="Hand" ToolTip="Cài đặt"/>
                     </StackPanel>
                 </Grid>
 
                 <TextBox Grid.Row="1" Margin="5,0,5,15" Text="Tìm kiếm người thân, bạn bè..." Foreground="#9CA3AF" Style="{StaticResource ModernTextBox}"/>
 
-                <ListBox Grid.Row="2" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBoxItem IsSelected="True">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Ellipse Grid.Column="0" Width="50" Height="50" Fill="#9CA3AF" Margin="0,0,12,0"/>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="Hoàng Hải" FontWeight="Bold" FontSize="14" Foreground="#1F2937"/>
-                                <TextBlock Text="You: Nghe hợp lý đấy! Mấy giờ đi..." Foreground="#6B7280" FontSize="12" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
-                            </StackPanel>
-                            <TextBlock Grid.Column="2" Text="10:35 AM" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Top"/>
-                        </Grid>
-                    </ListBoxItem>
-
-                    <ListBoxItem>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Grid Grid.Column="0" Margin="0,0,12,0">
-                                <Ellipse Width="50" Height="50" Fill="#10B981"/>
-                                <TextBlock Text="T" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18"/>
+                <ListBox x:Name="lstChats" Grid.Row="2" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="lstChats_SelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,5">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid Grid.Column="0" Margin="0,0,12,0">
+                                    <Ellipse Width="50" Height="50" Fill="{Binding AvatarColor}"/>
+                                    <TextBlock Text="{Binding Initials}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18"/>
+                                </Grid>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding ChatName}" FontWeight="Bold" FontSize="14" Foreground="#1F2937"/>
+                                    <TextBlock Text="{Binding LastMessage}" Foreground="#6B7280" FontSize="12" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                                <TextBlock Grid.Column="2" Text="{Binding LastMessageTime}" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Top"/>
                             </Grid>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="Team Phượt Xuyên Việt" FontWeight="Bold" FontSize="14" Foreground="#1F2937"/>
-                                <TextBlock Text="Tuấn: Cuối tuần nhớ mang theo áo..." Foreground="#3B82F6" FontWeight="SemiBold" FontSize="12" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
-                            </StackPanel>
-                            <TextBlock Grid.Column="2" Text="09:15 AM" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Top"/>
-                        </Grid>
-                    </ListBoxItem>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
                 </ListBox>
             </Grid>
         </Border>
@@ -147,9 +137,12 @@
             <Border Grid.Row="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="25,0">
                 <Grid>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Ellipse Width="45" Height="45" Fill="#9CA3AF"/>
-                        <StackPanel Margin="15,0,0,0" VerticalAlignment="Center">
-                            <TextBlock Text="Hoàng Hải" FontSize="18" FontWeight="Bold" Foreground="#1F2937"/>
+                        <Grid Margin="0,0,15,0">
+                            <Ellipse Width="45" Height="45" Fill="#9CA3AF"/>
+                            <TextBlock Text="{Binding ElementName=lstChats, Path=SelectedItem.Initials}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
+                        </Grid>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="txtCurrentChatName" Text="Chọn cuộc trò chuyện" FontSize="18" FontWeight="Bold" Foreground="#1F2937"/>
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="8" Height="8" Fill="#10B981" Margin="0,0,5,0"/>
                                 <TextBlock Text="Đang hoạt động" Foreground="#10B981" FontSize="12" FontWeight="SemiBold"/>
@@ -166,38 +159,50 @@
                 </Grid>
             </Border>
 
-            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <ScrollViewer x:Name="svMessages" Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="25" VerticalAlignment="Top">
-
                     <Border Background="White" BorderThickness="1" BorderBrush="#E5E7EB" CornerRadius="12" Padding="10,5" HorizontalAlignment="Center" Margin="0,0,0,25">
                         <TextBlock Text="Hôm nay" FontSize="12" Foreground="#6B7280" FontWeight="SemiBold"/>
                     </Border>
 
-                    <Grid Margin="0,0,0,20" HorizontalAlignment="Left">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Ellipse Grid.Column="0" Width="32" Height="32" Fill="#9CA3AF" VerticalAlignment="Top" Margin="0,0,10,0"/>
-                        <StackPanel Grid.Column="1">
-                            <Border Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="20,20,20,0" Padding="15,10" MaxWidth="500">
-                                <TextBlock Text="Cuối tuần này cậu có rảnh không? Bọn mình đi cà phê rồi xem phim luôn nhé?" TextWrapping="Wrap" Foreground="#1F2937" FontSize="14" LineHeight="20"/>
-                            </Border>
-                            <TextBlock Text="10:31 AM" FontSize="10" Foreground="#9CA3AF" Margin="5,4,0,0"/>
-                        </StackPanel>
-                    </Grid>
+                    <ItemsControl x:Name="icMessages">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <!-- Hiển thị tin nhắn của người khác (IsMine = False) -->
+                                    <Grid Margin="0,0,0,20" HorizontalAlignment="Left" Visibility="{Binding IsMine, Converter={StaticResource BooleanToVisibilityInverseConverter}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Grid.Column="0" Margin="0,0,10,0" VerticalAlignment="Top">
+                                            <Ellipse Width="32" Height="32" Fill="#9CA3AF"/>
+                                            <TextBlock Text="{Binding SenderName}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="12" MaxWidth="30" TextTrimming="CharacterEllipsis"/>
+                                        </Grid>
+                                        <StackPanel Grid.Column="1">
+                                            <Border Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="20,20,20,0" Padding="15,10" MaxWidth="500">
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="#1F2937" FontSize="14" LineHeight="20"/>
+                                            </Border>
+                                            <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="5,4,0,0"/>
+                                        </StackPanel>
+                                    </Grid>
 
-                    <Grid Margin="0,0,0,20" HorizontalAlignment="Right">
-                        <StackPanel HorizontalAlignment="Right">
-                            <Border Background="#3B82F6" CornerRadius="20,20,0,20" Padding="15,10" MaxWidth="500">
-                                <TextBlock Text="Nghe hợp lý đấy! Mấy giờ đi được để mình đặt vé trước?" TextWrapping="Wrap" Foreground="White" FontSize="14" LineHeight="20"/>
-                            </Border>
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,5,0">
-                                <TextBlock Text="10:35 AM" FontSize="10" Foreground="#9CA3AF" Margin="0,0,5,0"/>
-                                <TextBlock Text="✓✓" FontSize="10" Foreground="#3B82F6" FontWeight="Bold"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Grid>
+                                    <!-- Hiển thị tin nhắn của mình (IsMine = True) -->
+                                    <Grid Margin="0,0,0,20" HorizontalAlignment="Right" Visibility="{Binding IsMine, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <StackPanel HorizontalAlignment="Right">
+                                            <Border Background="#3B82F6" CornerRadius="20,20,0,20" Padding="15,10" MaxWidth="500">
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White" FontSize="14" LineHeight="20"/>
+                                            </Border>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,5,0">
+                                                <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="0,0,5,0"/>
+                                                <TextBlock Text="✓✓" FontSize="10" Foreground="#3B82F6" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </ScrollViewer>
 
@@ -213,9 +218,9 @@
                     <Button Grid.Column="0" Content="📎" Background="Transparent" BorderThickness="0" Margin="0,0,10,0" Cursor="Hand" FontSize="20" ToolTip="Gửi tệp"/>
                     <Button Grid.Column="1" Content="😄" Background="Transparent" BorderThickness="0" Margin="0,0,15,0" Cursor="Hand" FontSize="20" ToolTip="Chèn biểu tượng"/>
 
-                    <TextBox Grid.Column="2" Style="{StaticResource ModernTextBox}" Text="Nhập tin nhắn bảo mật của bạn tại đây..." Foreground="#9CA3AF" Height="45"/>
+                    <TextBox x:Name="txtMessageInput" Grid.Column="2" Style="{StaticResource ModernTextBox}" Foreground="#1F2937" Height="45"/>
 
-                    <Button Grid.Column="3" Content="GỬI" Style="{StaticResource SendButton}" Margin="15,0,0,0" Padding="30,0" Height="45"/>
+                    <Button Click="btnSendMessage_Click" Grid.Column="3" Content="GỬI" Style="{StaticResource SendButton}" Margin="15,0,0,0" Padding="30,0" Height="45"/>
                 </Grid>
             </Border>
         </Grid>
