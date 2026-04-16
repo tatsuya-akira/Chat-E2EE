@@ -3,7 +3,7 @@ using System.Data;
 using System.Windows;
 using DotNetEnv;
 
-namespace demo
+namespace Hermes
 {
     /// <summary>
     /// Interaction logic for App.xaml
