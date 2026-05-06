@@ -14,6 +14,8 @@ namespace Hermes
         private static FirebaseAuthProvider _authProvider;
         public static string CurrentUserId { get; private set; }
         public static string CurrentToken { get; private set; }
+        public static string CurrentPrivateKey { get; private set; }
+        public static string CurrentPublicKey { get; private set; }
 
         static AuthService()
         {
@@ -35,6 +37,7 @@ namespace Hermes
                 {
                     CurrentUserId = auth.User.LocalId;
                     CurrentToken = auth.FirebaseToken;
+                    LoadUserKeys(CurrentUserId, password);
                     return true;
                 }
                 return false;
@@ -84,7 +87,12 @@ namespace Hermes
                 {
                     if (auth != null && !string.IsNullOrEmpty(auth.User.LocalId))
                     {
-                        SaveUserToDatabase(auth.User.LocalId, email, username);
+                        var salt = Hermes.Backend.Services.CryptoService.GenerateSalt();
+                        var masterKey = Hermes.Backend.Services.CryptoService.DeriveMasterKey(password, salt);
+                        var keys = Hermes.Backend.Services.CryptoService.GenerateRSAKeys();
+                        var wrappedPriv = Hermes.Backend.Services.CryptoService.EncryptPrivateKey(keys.PrivateKeyBase64, masterKey);
+
+                        SaveUserToDatabase(auth.User.LocalId, email, username, keys.PublicKeyBase64, wrappedPriv, salt);
                         return true;
                     }
                     return false;
@@ -119,6 +127,8 @@ namespace Hermes
         {
             CurrentUserId = null;
             CurrentToken = null;
+            CurrentPrivateKey = null;
+            CurrentPublicKey = null;
         }
 
         public static string GetUsernameByIdentifier(string identifier)
@@ -127,8 +137,8 @@ namespace Hermes
             {
                 connection.Open();
                 string query = @"
-                    SELECT i.FullName FROM Users u
-                    JOIN Info i ON u.Id = i.UserId
+                    SELECT i.FullName FROM USERS u
+                    JOIN USERINFO i ON u.Id = i.UserId
                     WHERE u.Email = @Iden OR i.FullName = @Iden LIMIT 1";
 
                 using (var cmd = new MySqlCommand(query, connection))
@@ -140,23 +150,51 @@ namespace Hermes
             }
         }
 
-        private static void SaveUserToDatabase(string userId, string email, string username)
+        private static void LoadUserKeys(string userId, string password)
+        {
+            using (var connection = new MySqlConnection(MySqlConnectionString))
+            {
+                connection.Open();
+                string query = "SELECT PublicKey, WrappedPrivateKey, Salt FROM USERS WHERE Id = @Id LIMIT 1";
+                using (var cmd = new MySqlCommand(query, connection))
+                {
+                    cmd.Parameters.AddWithValue("@Id", userId);
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        if (reader.Read())
+                        {
+                            CurrentPublicKey = reader["PublicKey"].ToString();
+                            string wrappedPriv = reader["WrappedPrivateKey"].ToString();
+                            string salt = reader["Salt"].ToString();
+
+                            var masterKey = Hermes.Backend.Services.CryptoService.DeriveMasterKey(password, salt);
+                            CurrentPrivateKey = Hermes.Backend.Services.CryptoService.DecryptPrivateKey(wrappedPriv, masterKey);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void SaveUserToDatabase(string userId, string email, string username, string pubKey, string wrappedPrivKey, string salt)
         {
             using (var connection = new MySqlConnection(MySqlConnectionString))
             {
                 connection.Open();
 
-                // Lưu vào bảng Users
-                string insertUserQuery = "INSERT INTO Users (Id, Email) VALUES (@Id, @Email)";
+                // Lưu vào bảng USERS
+                string insertUserQuery = "INSERT INTO USERS (Id, Email, PublicKey, WrappedPrivateKey, Salt) VALUES (@Id, @Email, @PubKey, @WrappedPriv, @Salt)";
                 using (var cmd = new MySqlCommand(insertUserQuery, connection))
                 {
                     cmd.Parameters.AddWithValue("@Id", userId);
                     cmd.Parameters.AddWithValue("@Email", email);
+                    cmd.Parameters.AddWithValue("@PubKey", pubKey);
+                    cmd.Parameters.AddWithValue("@WrappedPriv", wrappedPrivKey);
+                    cmd.Parameters.AddWithValue("@Salt", salt);
                     cmd.ExecuteNonQuery();
                 }
 
-                // Lưu vào bảng Info (liên kết khóa ngoại)
-                string insertInfoQuery = "INSERT INTO Info (UserId, FullName) VALUES (@UserId, @FullName)";
+                // Lưu vào bảng USERINFO (liên kết khóa ngoại)
+                string insertInfoQuery = "INSERT INTO USERINFO (UserId, FullName) VALUES (@UserId, @FullName)";
                 using (var cmd = new MySqlCommand(insertInfoQuery, connection))
                 {
                     cmd.Parameters.AddWithValue("@UserId", userId);

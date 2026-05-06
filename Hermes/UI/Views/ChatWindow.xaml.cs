@@ -62,18 +62,28 @@ namespace Hermes
             createChat.Owner = this;
             if (createChat.ShowDialog() == true)
             {
-                string newChatName = createChat.ChatName;
-                var newChat = new ChatModel 
-                { 
-                    ChatId = Guid.NewGuid().ToString(), 
-                    ChatName = newChatName, 
-                    Initials = createChat.IsGroup ? "G" : (newChatName.Length > 0 ? newChatName.Substring(0, 1).ToUpper() : ""), 
-                    AvatarColor = createChat.IsGroup ? "#10B981" : "#F59E0B", 
-                    LastMessage = "Bắt đầu cuộc trò chuyện...", 
-                    LastMessageTime = DateTime.Now.ToString("hh:mm tt") 
-                };
-                Chats.Insert(0, newChat);
-                lstChats.SelectedItem = newChat;
+                try
+                {
+                    string newChatName = createChat.ChatName;
+                    var userIds = createChat.UserIds.ToList();
+                    int newConvId = Hermes.Backend.Services.ConversationService.CreateConversation(createChat.IsGroup, createChat.IsGroup ? newChatName : null, userIds);
+
+                    var newChat = new ChatModel 
+                    { 
+                        ChatId = newConvId.ToString(), 
+                        ChatName = newChatName, 
+                        Initials = createChat.IsGroup ? "G" : (newChatName.Length > 0 ? newChatName.Substring(0, 1).ToUpper() : ""), 
+                        AvatarColor = createChat.IsGroup ? "#10B981" : "#F59E0B", 
+                        LastMessage = "Bắt đầu cuộc trò chuyện...", 
+                        LastMessageTime = DateTime.Now.ToString("hh:mm tt") 
+                    };
+                    Chats.Insert(0, newChat);
+                    lstChats.SelectedItem = newChat;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Lỗi lưu cuộc trò chuyện: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
             }
         }
 

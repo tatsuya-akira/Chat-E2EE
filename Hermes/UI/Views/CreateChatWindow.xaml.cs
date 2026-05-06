@@ -9,6 +9,7 @@ namespace Hermes
         public bool IsGroup { get; private set; }
         public string ChatName { get; private set; }
         public string[] Participants { get; private set; }
+        public string[] UserIds { get; private set; }
 
         public CreateChatWindow()
         {
@@ -56,15 +57,15 @@ namespace Hermes
                     var targets = targetInput.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
                                              .Select(t => t.Trim())
                                              .Distinct()
-                                             .ToArray();
+                                             .ToList();
 
-                    if (targets.Length < 2)
+                    if (targets.Count < 2)
                     {
                         MessageBox.Show("Nhóm phải có tối thiểu 2 người tham gia khác.", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
                         return;
                     }
 
-                    var invalidUsers = targets.Where(t => string.IsNullOrEmpty(AuthService.GetUsernameByIdentifier(t))).ToList();
+                    var invalidUsers = targets.Where(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).UserId == null).ToList();
                     if (invalidUsers.Any())
                     {
                         MessageBox.Show("Không tìm thấy các tài khoản sau:\n" + string.Join("\n", invalidUsers), "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -73,19 +74,35 @@ namespace Hermes
 
                     IsGroup = true;
                     ChatName = groupName;
-                    Participants = targets.Select(t => AuthService.GetUsernameByIdentifier(t)).ToArray();
+
+                    var participantsList = targets.Select(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).FullName).ToList();
+                    var userIdsList = targets.Select(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).UserId).ToList();
+
+                    // Optional: Get current user's full name to append to Participants
+                    string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
+                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
+                    userIdsList.Add(AuthService.CurrentUserId);
+
+                    Participants = participantsList.ToArray();
+                    UserIds = userIdsList.ToArray();
                 }
                 else
                 {
-                    string username = AuthService.GetUsernameByIdentifier(targetInput);
-                    if (string.IsNullOrEmpty(username))
+                    var user = Hermes.Backend.Services.ConversationService.GetUserByIdentifier(targetInput);
+                    if (user.UserId == null)
                     {
                         MessageBox.Show("Không tìm thấy tài khoản này!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
                         return;
                     }
                     IsGroup = false;
-                    ChatName = username;
-                    Participants = new[] { username };
+                    ChatName = user.FullName;
+
+                    var participantsList = new System.Collections.Generic.List<string> { user.FullName };
+                    string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
+                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
+
+                    Participants = participantsList.ToArray();
+                    UserIds = new[] { user.UserId, AuthService.CurrentUserId };
                 }
 
                 this.DialogResult = true;
