@@ -66,6 +66,8 @@ namespace Hermes.Models
         private string _lastMessageTime;
         private string _initials;
         private string _avatarColor;
+        private string _avatarUrl;
+        private bool _isOnline;
         private ObservableCollection<MessageModel> _messages;
 
         public string ChatId
@@ -102,6 +104,22 @@ namespace Hermes.Models
         {
             get => _avatarColor;
             set { _avatarColor = value; OnPropertyChanged(); }
+        }
+
+        /// <summary>Remote URL or local file path for real avatar image.</summary>
+        public string AvatarUrl
+        {
+            get => _avatarUrl;
+            set { _avatarUrl = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasAvatar)); }
+        }
+
+        public bool HasAvatar => !string.IsNullOrEmpty(_avatarUrl);
+
+        /// <summary>True when this contact is currently online (Firebase presence).</summary>
+        public bool IsOnline
+        {
+            get => _isOnline;
+            set { _isOnline = value; OnPropertyChanged(); }
         }
 
         public ObservableCollection<MessageModel> Messages

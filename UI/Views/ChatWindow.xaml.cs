@@ -31,6 +31,7 @@ namespace Hermes
         private IDisposable _userSyncSubscription;
         private IDisposable _messagesSubscription;
         private IDisposable _seenSyncSubscription;
+        private IDisposable _presenceSubscription;  // Task 10: peer online status
 
         public ChatWindow(string userId)
         {
@@ -42,6 +43,9 @@ namespace Hermes
             SetupFirebaseListener();
 
             lstChats.ItemsSource = Chats;
+
+            // Task 10: broadcast self as online
+            _ = _dbService.SetOnlineStatusAsync(_currentUserId, true);
         }
 
         // ──────────────────────────────────────────────────────────────────────
@@ -85,6 +89,11 @@ namespace Hermes
             _userSyncSubscription?.Dispose();
             _messagesSubscription?.Dispose();
             _seenSyncSubscription?.Dispose();
+            _presenceSubscription?.Dispose();
+
+            // Task 10: mark self offline on window close
+            _ = _dbService.SetOnlineStatusAsync(_currentUserId, false);
+
             base.OnClosed(e);
         }
 
@@ -97,7 +106,16 @@ namespace Hermes
             var realChats = _dbService.GetUserChats(_currentUserId);
             Chats.Clear();
             foreach (var chat in realChats)
+            {
+                // Enrich with avatar + online status (Task 10)
+                if (long.TryParse(chat.ChatId, out long convId))
+                {
+                    var (avatarUrl, isOnline) = _dbService.GetPeerAvatarAndStatus(convId, _currentUserId);
+                    chat.AvatarUrl = avatarUrl;
+                    chat.IsOnline  = isOnline;
+                }
                 Chats.Add(chat);
+            }
         }
 
         // ──────────────────────────────────────────────────────────────────────
@@ -144,6 +162,13 @@ namespace Hermes
                 txtCurrentChatName.Text   = selectedChat.ChatName;
 
                 long convId = long.Parse(selectedChat.ChatId);
+
+                // Task 10: update header avatar + status dot
+                UpdateHeaderPresence(selectedChat);
+
+                // Subscribe to peer's presence changes
+                _presenceSubscription?.Dispose();
+                SubscribeToPeerPresence(selectedChat);
 
                 // Load message history from MySQL
                 var msgs = _dbService.GetMessages(convId, _currentUserId);
@@ -239,6 +264,97 @@ namespace Hermes
             {
                 EmptyStateArea.Visibility = Visibility.Visible;
                 ChatArea.Visibility       = Visibility.Collapsed;
+            }
+        }
+
+        // ── Task 10: update header avatar + online dot ─────────────────────────
+        private void UpdateHeaderPresence(ChatModel chat)
+        {
+            bool online = chat.IsOnline;
+
+            // Status text
+            txtOnlineStatus.Text       = online ? "Đang hoạt động" : "Ngoại tuyến";
+            txtOnlineStatus.Foreground = online
+                ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129))
+                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(156, 163, 175));
+            statusDot.Fill = online
+                ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129))
+                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(156, 163, 175));
+            headerOnlineDot.Fill = statusDot.Fill;
+
+            // Avatar image in header
+            if (!string.IsNullOrEmpty(chat.AvatarUrl))
+            {
+                try
+                {
+                    var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                    bmp.BeginInit();
+                    bmp.UriSource     = chat.AvatarUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                                        ? new Uri(chat.AvatarUrl)
+                                        : new Uri(chat.AvatarUrl, UriKind.Absolute);
+                    bmp.CacheOption   = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                    bmp.EndInit();
+                    headerAvatarImg.Source       = bmp;
+                    headerAvatarBorder.Visibility = Visibility.Visible;
+                    headerAvatarEllipse.Visibility = Visibility.Collapsed;
+                    headerAvatarInitials.Visibility = Visibility.Collapsed;
+                }
+                catch
+                {
+                    headerAvatarBorder.Visibility  = Visibility.Collapsed;
+                    headerAvatarEllipse.Visibility = Visibility.Visible;
+                    headerAvatarInitials.Visibility = Visibility.Visible;
+                }
+            }
+            else
+            {
+                headerAvatarBorder.Visibility  = Visibility.Collapsed;
+                headerAvatarEllipse.Visibility = Visibility.Visible;
+                headerAvatarInitials.Visibility = Visibility.Visible;
+            }
+        }
+
+        // ── Task 10: Firebase presence subscription for the selected peer ────────
+        private void SubscribeToPeerPresence(ChatModel chat)
+        {
+            if (_firebaseClient == null) return;
+
+            // Find peer userId for this 1-on-1 chat
+            // We'll listen to Firebase presence/<any key> in the conversation
+            try
+            {
+                _presenceSubscription = _firebaseClient
+                    .Child("presence")
+                    .AsObservable<dynamic>()
+                    .Subscribe(
+                        d =>
+                        {
+                            if (d.EventType != Firebase.Database.Streaming.FirebaseEventType.InsertOrUpdate) return;
+                            if (d.Key == _currentUserId) return; // ignore self
+
+                            Dispatcher.Invoke(() =>
+                            {
+                                try
+                                {
+                                    bool online = (bool)d.Object.isOnline;
+                                    // Update matching chat in the list
+                                    var matched = Chats.FirstOrDefault(c => c.ChatName == chat.ChatName);
+                                    if (matched != null)
+                                    {
+                                        matched.IsOnline = online;
+                                        if (lstChats.SelectedItem == matched)
+                                            UpdateHeaderPresence(matched);
+                                    }
+                                }
+                                catch { }
+                            });
+                        },
+                        ex => Console.WriteLine("Presence subscription error: " + ex.Message)
+                    );
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Presence setup error: " + ex.Message);
             }
         }
 

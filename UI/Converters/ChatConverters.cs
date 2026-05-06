@@ -51,4 +51,33 @@ namespace Hermes.Converters
         }
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
     }
+
+    // ── Online status dot: green = online, gray = offline ─────────────────────
+    public class BoolToOnlineColorConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            bool online = value is bool b && b;
+            return online
+                ? new SolidColorBrush(Color.FromRgb(16, 185, 129))   // #10B981 green
+                : new SolidColorBrush(Color.FromRgb(156, 163, 175));  // #9CA3AF gray
+        }
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+    }
+
+    // ── Show avatar Image only when AvatarUrl is non-empty ────────────────────
+    public class HasAvatarToVisibilityConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+            => value is bool hasAvatar && hasAvatar ? Visibility.Visible : Visibility.Collapsed;
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+    }
+
+    // ── Inverse: show initials ellipse only when no avatar ────────────────────
+    public class NoAvatarToVisibilityConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+            => value is bool hasAvatar && hasAvatar ? Visibility.Collapsed : Visibility.Visible;
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+    }
 }

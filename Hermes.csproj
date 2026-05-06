@@ -24,12 +24,4 @@
     <Page Remove="Hermes.Tests\**" />
   </ItemGroup>
 
-  <!-- Exclude legacy duplicate subfolder (old copy merged into root) -->
-  <ItemGroup>
-    <Compile Remove="Hermes\**" />
-    <EmbeddedResource Remove="Hermes\**" />
-    <None Remove="Hermes\**" />
-    <Page Remove="Hermes\**" />
-  </ItemGroup>
-
 </Project>

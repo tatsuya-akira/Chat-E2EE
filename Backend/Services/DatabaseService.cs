@@ -436,5 +436,210 @@ namespace Hermes.Services
                 }
             }
         }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // GET USER PROFILE  (Task 9)
+        // ──────────────────────────────────────────────────────────────────────
+        /// <summary>Loads full profile for the given userId (joins users + userinfo).</summary>
+        public Hermes.Models.UserProfileModel? GetUserProfile(string userId)
+        {
+            try
+            {
+                using (var conn = new MySqlConnection(_connectionString))
+                {
+                    conn.Open();
+                    string sql = @"
+                        SELECT
+                            u.Id,
+                            u.Email,
+                            u.Username,
+                            i.FullName,
+                            i.AvatarUrl,
+                            i.Bio,
+                            i.IsOnline,
+                            i.CreatedAt
+                        FROM users u
+                        LEFT JOIN userinfo i ON u.Id = i.UserId
+                        WHERE u.Id = @uid
+                        LIMIT 1";
+
+                    using (var cmd = new MySqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@uid", userId);
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            if (!reader.Read()) return null;
+                            return new Hermes.Models.UserProfileModel
+                            {
+                                UserId      = reader["Id"].ToString() ?? string.Empty,
+                                Email       = reader["Email"].ToString() ?? string.Empty,
+                                Username    = reader["Username"] == DBNull.Value ? string.Empty : reader["Username"].ToString() ?? string.Empty,
+                                DisplayName = reader["FullName"] == DBNull.Value ? string.Empty : reader["FullName"].ToString() ?? string.Empty,
+                                AvatarUrl   = reader["AvatarUrl"] == DBNull.Value ? string.Empty : reader["AvatarUrl"].ToString() ?? string.Empty,
+                                Bio         = reader["Bio"] == DBNull.Value ? string.Empty : reader["Bio"].ToString() ?? string.Empty,
+                                IsOnline    = reader["IsOnline"] != DBNull.Value && Convert.ToBoolean(reader["IsOnline"]),
+                                CreatedAt   = reader["CreatedAt"] == DBNull.Value ? default : Convert.ToDateTime(reader["CreatedAt"])
+                            };
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GetUserProfile Error: " + ex.Message);
+                return null;
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // UPDATE PROFILE (DisplayName + Bio)  (Task 9)
+        // ──────────────────────────────────────────────────────────────────────
+        public async Task<bool> UpdateProfileAsync(string userId, string displayName, string bio)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) return false;
+            // Sanitize: strip control characters
+            displayName = displayName?.Trim() ?? string.Empty;
+            bio         = bio?.Trim() ?? string.Empty;
+
+            try
+            {
+                using (var conn = new MySqlConnection(_connectionString))
+                {
+                    await conn.OpenAsync();
+                    string sql = @"
+                        INSERT INTO userinfo (UserId, FullName, Bio)
+                        VALUES (@uid, @name, @bio)
+                        ON DUPLICATE KEY UPDATE
+                            FullName = @name,
+                            Bio      = @bio";
+                    using (var cmd = new MySqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@uid",  userId);
+                        cmd.Parameters.AddWithValue("@name", displayName);
+                        cmd.Parameters.AddWithValue("@bio",  bio);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("UpdateProfile Error: " + ex.Message);
+                return false;
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // UPDATE AVATAR URL  (Task 9 — local path or Firebase Storage URL)
+        // ──────────────────────────────────────────────────────────────────────
+        public async Task<bool> UpdateAvatarUrlAsync(string userId, string avatarUrl)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) return false;
+            try
+            {
+                using (var conn = new MySqlConnection(_connectionString))
+                {
+                    await conn.OpenAsync();
+                    string sql = @"
+                        INSERT INTO userinfo (UserId, AvatarUrl)
+                        VALUES (@uid, @url)
+                        ON DUPLICATE KEY UPDATE AvatarUrl = @url";
+                    using (var cmd = new MySqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@uid", userId);
+                        cmd.Parameters.AddWithValue("@url", avatarUrl);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("UpdateAvatarUrl Error: " + ex.Message);
+                return false;
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // SET ONLINE STATUS  (Task 10)
+        // ──────────────────────────────────────────────────────────────────────
+        /// <summary>Flips IsOnline in MySQL and broadcasts presence to Firebase.</summary>
+        public async Task SetOnlineStatusAsync(string userId, bool isOnline)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) return;
+            try
+            {
+                // 1. Update MySQL
+                using (var conn = new MySqlConnection(_connectionString))
+                {
+                    await conn.OpenAsync();
+                    string sql = @"
+                        INSERT INTO userinfo (UserId, IsOnline, LastSeenAt)
+                        VALUES (@uid, @online, @now)
+                        ON DUPLICATE KEY UPDATE
+                            IsOnline   = @online,
+                            LastSeenAt = CASE WHEN @online = FALSE THEN @now ELSE LastSeenAt END";
+                    using (var cmd = new MySqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@uid",    userId);
+                        cmd.Parameters.AddWithValue("@online", isOnline);
+                        cmd.Parameters.AddWithValue("@now",    DateTime.UtcNow);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+
+                // 2. Push real-time presence to Firebase
+                var firebase = CreateFirebaseClient();
+                await firebase.Child("presence")
+                              .Child(userId)
+                              .PutAsync(new
+                              {
+                                  isOnline  = isOnline,
+                                  updatedAt = DateTime.UtcNow.ToString("o")
+                              });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("SetOnlineStatus Error: " + ex.Message);
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // GET PEER AVATAR + ONLINE STATUS for a 1-on-1 conversation  (Task 10)
+        // ──────────────────────────────────────────────────────────────────────
+        public (string avatarUrl, bool isOnline) GetPeerAvatarAndStatus(long conversationId, string currentUserId)
+        {
+            try
+            {
+                using (var conn = new MySqlConnection(_connectionString))
+                {
+                    conn.Open();
+                    string sql = @"
+                        SELECT i.AvatarUrl, i.IsOnline
+                        FROM participants p
+                        JOIN userinfo i ON p.UserId = i.UserId
+                        WHERE p.ConversationId = @convId
+                          AND p.UserId != @uid
+                        LIMIT 1";
+                    using (var cmd = new MySqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@convId", conversationId);
+                        cmd.Parameters.AddWithValue("@uid",    currentUserId);
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            if (!reader.Read()) return (string.Empty, false);
+                            string url      = reader["AvatarUrl"] == DBNull.Value ? string.Empty : reader["AvatarUrl"].ToString() ?? string.Empty;
+                            bool   online   = reader["IsOnline"] != DBNull.Value && Convert.ToBoolean(reader["IsOnline"]);
+                            return (url, online);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GetPeerAvatarAndStatus Error: " + ex.Message);
+                return (string.Empty, false);
+            }
+        }
     }
 }

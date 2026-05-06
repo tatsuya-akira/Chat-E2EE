@@ -1,4 +1,4 @@
-﻿# Hermes Chat App
+# Hermes Chat App
 
 Một ứng dụng nhắn tin bảo mật trên Desktop (WPF) với trọng tâm là tính năng **Mã hóa đầu cuối (End-to-End Encryption - E2EE)** và **Mật khẩu giả (Duress Password)**.
 
@@ -40,13 +40,28 @@ Hermes Chat App được xây dựng với mục tiêu cung cấp một nền t�
 
 
 ## Cấu trúc Cơ sở dữ liệu
-1. `USERS`: Lưu trữ UID, Public Key và Wrapped Private Key.
-2. `USERINFO`: Thông tin cá nhân hiển thị.
+1. `USERS`: Lưu trữ UID, Username, Public Key và Wrapped Private Key.
+2. `USERINFO`: Thông tin cá nhân (FullName, AvatarUrl, Bio, IsOnline, CreatedAt, LastSeenAt).
 3. `CONTACTS`: Quản lý danh sách bạn bè.
 4. `CONVERSATIONS`: Quản lý phiên hội thoại (Cá nhân/Nhóm).
 5. `PARTICIPANTS`: Thành viên tham gia hội thoại.
 6. `MESSAGES`: Lưu trữ CipherText (AES Encrypted).
 7. `MESSAGE_RECIPIENTS`: Lưu trữ Encrypted Session Keys (RSA Encrypted).
+
+### ✅ Task 9 — Quản lý tài khoản (Hoàn thành)
+- Cập nhật Avatar: nhấn vào ảnh đại diện → chọn file → lưu local + upload Firebase Storage.
+- Chỉnh sửa DisplayName và Bio — lưu vào MySQL qua `UpdateProfileAsync`.
+- Hiển thị Username (read-only), CreatedAt, Email.
+- Badge trạng thái xác thực Email từ Firebase Auth (`IsEmailVerified`).
+- Nút "Đổi mật khẩu" gửi email reset qua Firebase.
+
+### ✅ Task 10 — Trạng thái hoạt động (Hoàn thành)
+- Khi mở `ChatWindow`: gọi `SetOnlineStatusAsync(userId, true)` → cập nhật MySQL + Firebase presence.
+- Khi đóng `ChatWindow` hoặc Logout: gọi `SetOnlineStatusAsync(userId, false)`.
+- Danh sách chat hiển thị chấm trạng thái (🟢 xanh = online, ⚫ xám = offline) cạnh avatar.
+- Header chat hiển thị status dot + text "Đang hoạt động / Ngoại tuyến" thay đổi theo real-time.
+- Firebase presence subscription cập nhật dot ngay khi peer online/offline.
+
 
 ## Hướng dẫn cài đặt (Local Development)
 1. Clone repository về máy.

@@ -15,6 +15,7 @@ namespace Hermes
         private static FirebaseAuthProvider _authProvider;
         public static string CurrentUserId { get; set; }
         public static string CurrentToken { get; private set; }
+        public static bool IsEmailVerified { get; private set; }
 
         static AuthService()
         {
@@ -119,6 +120,7 @@ namespace Hermes
                 {
                     CurrentUserId = auth.User.LocalId;
                     CurrentToken = auth.FirebaseToken;
+                    IsEmailVerified = auth.User.IsEmailVerified;
                     Console.WriteLine("Logged in UserID: " + CurrentUserId);
                     
                     string fallbackUsername = email.Contains("@") ? email.Split('@')[0] : email;
@@ -162,16 +164,21 @@ namespace Hermes
             }
         }
 
-        public static async Task<bool> SendPasswordResetEmailAsync(string email)
-        {
-            await _authProvider.SendPasswordResetEmailAsync(email);
-            return true;
-        }
-
         public static void Logout()
         {
             CurrentUserId = null;
             CurrentToken = null;
+            IsEmailVerified = false;
+        }
+
+        /// <summary>
+        /// Sends a password-reset email for the currently logged-in user's email.
+        /// </summary>
+        public static async Task<bool> SendPasswordResetEmailAsync(string email)
+        {
+            if (string.IsNullOrWhiteSpace(email)) return false;
+            await _authProvider.SendPasswordResetEmailAsync(email);
+            return true;
         }
     }
-}
+}

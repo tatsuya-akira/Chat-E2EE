@@ -8,9 +8,12 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
         <conv:BooleanToVisibilityInverseConverter x:Key="BooleanToVisibilityInverseConverter"/>
-        <conv:SeenColorConverter x:Key="SeenColorConverter"/>
-        <conv:IsImageUrlConverter x:Key="IsImageUrlConverter"/>
-        <conv:IsNotImageUrlConverter x:Key="IsNotImageUrlConverter"/>
+        <conv:SeenColorConverter         x:Key="SeenColorConverter"/>
+        <conv:IsImageUrlConverter        x:Key="IsImageUrlConverter"/>
+        <conv:IsNotImageUrlConverter     x:Key="IsNotImageUrlConverter"/>
+        <conv:BoolToOnlineColorConverter x:Key="BoolToOnlineColorConverter"/>
+        <conv:HasAvatarToVisibilityConverter x:Key="HasAvatarToVisibilityConverter"/>
+        <conv:NoAvatarToVisibilityConverter  x:Key="NoAvatarToVisibilityConverter"/>
 
         <Style TargetType="TextBox" x:Key="ModernTextBox">
             <Setter Property="BorderThickness" Value="1"/>
@@ -150,14 +153,32 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
+
+                                <!-- Avatar column with online dot -->
                                 <Grid Grid.Column="0" Width="45" Height="45">
-                                    <Ellipse Width="45" Height="45">
+                                    <!-- Real avatar image (if available) -->
+                                    <Border CornerRadius="22" ClipToBounds="True" Width="45" Height="45"
+                                            Visibility="{Binding HasAvatar, Converter={StaticResource HasAvatarToVisibilityConverter}}">
+                                        <Image Source="{Binding AvatarUrl}" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <!-- Initials fallback -->
+                                    <Ellipse Width="45" Height="45"
+                                             Visibility="{Binding HasAvatar, Converter={StaticResource NoAvatarToVisibilityConverter}}">
                                         <Ellipse.Fill>
                                             <SolidColorBrush Color="{Binding AvatarColor}"/>
                                         </Ellipse.Fill>
                                     </Ellipse>
-                                    <TextBlock Text="{Binding Initials}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
+                                    <TextBlock Text="{Binding Initials}" Foreground="White" FontWeight="Bold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"
+                                               Visibility="{Binding HasAvatar, Converter={StaticResource NoAvatarToVisibilityConverter}}"/>
+                                    <!-- Online status dot (bottom-right) -->
+                                    <Ellipse Width="12" Height="12"
+                                             HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                             Margin="0,0,1,1"
+                                             Stroke="White" StrokeThickness="2"
+                                             Fill="{Binding IsOnline, Converter={StaticResource BoolToOnlineColorConverter}}"/>
                                 </Grid>
+
                                 <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding ChatName}" FontWeight="SemiBold" Foreground="#1F2937" FontSize="14"/>
                                     <TextBlock Text="{Binding LastMessage}" FontSize="12" Foreground="#6B7280" TextTrimming="CharacterEllipsis" MaxWidth="180"/>
@@ -191,15 +212,31 @@
             <Border Grid.Row="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="25,0">
                 <Grid>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Grid Margin="0,0,15,0">
-                            <Ellipse Width="45" Height="45" Fill="#9CA3AF"/>
-                            <TextBlock Text="{Binding ElementName=lstChats, Path=SelectedItem.Initials}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
+                        <!-- Peer avatar with online dot -->
+                        <Grid Margin="0,0,15,0" Width="45" Height="45">
+                            <!-- Real avatar -->
+                            <Border x:Name="headerAvatarBorder" CornerRadius="22" ClipToBounds="True"
+                                    Width="45" Height="45" Visibility="Collapsed">
+                                <Image x:Name="headerAvatarImg" Stretch="UniformToFill"/>
+                            </Border>
+                            <!-- Initials fallback -->
+                            <Ellipse x:Name="headerAvatarEllipse" Width="45" Height="45" Fill="#9CA3AF"/>
+                            <TextBlock Text="{Binding ElementName=lstChats, Path=SelectedItem.Initials}"
+                                       x:Name="headerAvatarInitials"
+                                       Foreground="White" FontWeight="Bold"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
+                            <!-- Online status dot -->
+                            <Ellipse x:Name="headerOnlineDot" Width="12" Height="12"
+                                     HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                     Margin="0,0,1,1"
+                                     Stroke="White" StrokeThickness="2"
+                                     Fill="#9CA3AF"/>
                         </Grid>
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock x:Name="txtCurrentChatName" Text="Chọn cuộc trò chuyện" FontSize="18" FontWeight="Bold" Foreground="#1F2937"/>
                             <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="8" Height="8" Fill="#10B981" Margin="0,0,5,0"/>
-                                <TextBlock Text="Đang hoạt động" Foreground="#10B981" FontSize="12" FontWeight="SemiBold"/>
+                                <Ellipse x:Name="statusDot" Width="8" Height="8" Fill="#9CA3AF" Margin="0,0,5,0"/>
+                                <TextBlock x:Name="txtOnlineStatus" Text="Ngoại tuyến" Foreground="#9CA3AF" FontSize="12" FontWeight="SemiBold"/>
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>
