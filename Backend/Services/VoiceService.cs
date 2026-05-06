@@ -3,16 +3,16 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-// using NAudio.Wave;
+using NAudio.Wave;
 
 namespace Hermes.Backend.Services
 {
     public class VoiceService : IDisposable
     {
         private UdpClient _udpClient;
-        // private WaveInEvent _waveIn;
-        // private WaveOutEvent _waveOut;
-        // private BufferedWaveProvider _waveProvider;
+        private WaveInEvent _waveIn;
+        private WaveOutEvent _waveOut;
+        private BufferedWaveProvider _waveProvider;
         private IPEndPoint _remoteEndPoint;
         private CancellationTokenSource _cts;
 
@@ -33,8 +33,7 @@ namespace Hermes.Backend.Services
             // Hole Punching
             HolePunchAsync().ConfigureAwait(false);
 
-            // Audio setup (Uncomment when NAudio is available)
-            /*
+            // Audio setup
             _waveIn = new WaveInEvent
             {
                 WaveFormat = new WaveFormat(16000, 16, 1) // 16kHz, 16-bit, Mono as per CONTEXT.md
@@ -44,7 +43,6 @@ namespace Hermes.Backend.Services
             _waveProvider = new BufferedWaveProvider(_waveIn.WaveFormat);
             _waveOut = new WaveOutEvent();
             _waveOut.Init(_waveProvider);
-            */
         }
 
         private async Task HolePunchAsync()
@@ -66,19 +64,18 @@ namespace Hermes.Backend.Services
 
         public void StartCall()
         {
-            // _waveIn?.StartRecording();
-            // _waveOut?.Play();
+            _waveIn?.StartRecording();
+            _waveOut?.Play();
             Task.Run(() => ReceiveAudioLoop(_cts.Token));
         }
 
         public void EndCall()
         {
             _cts?.Cancel();
-            // _waveIn?.StopRecording();
-            // _waveOut?.Stop();
+            _waveIn?.StopRecording();
+            _waveOut?.Stop();
         }
 
-        /*
         private async void WaveIn_DataAvailable(object sender, WaveInEventArgs e)
         {
             try
@@ -93,7 +90,6 @@ namespace Hermes.Backend.Services
                 OnError?.Invoke($"Send audio error: {ex.Message}");
             }
         }
-        */
 
         private async Task ReceiveAudioLoop(CancellationToken token)
         {
@@ -104,7 +100,7 @@ namespace Hermes.Backend.Services
                     var result = await _udpClient.ReceiveAsync(token);
                     if (result.Buffer.Length > 1) // ignore dummy hole punch packets
                     {
-                        // _waveProvider?.AddSamples(result.Buffer, 0, result.Buffer.Length);
+                        _waveProvider?.AddSamples(result.Buffer, 0, result.Buffer.Length);
                     }
                 }
             }
@@ -118,8 +114,8 @@ namespace Hermes.Backend.Services
         public void Dispose()
         {
             EndCall();
-            // _waveIn?.Dispose();
-            // _waveOut?.Dispose();
+            _waveIn?.Dispose();
+            _waveOut?.Dispose();
             _udpClient?.Dispose();
             _cts?.Dispose();
         }
