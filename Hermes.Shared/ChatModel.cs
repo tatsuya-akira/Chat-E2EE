@@ -2,7 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace Hermes.Models
+namespace Hermes.Shared.Models
 {
     public class MessageModel : INotifyPropertyChanged
     {

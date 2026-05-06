@@ -135,18 +135,12 @@ namespace Hermes
         {
             using (var connection = new MySqlConnection(MySqlConnectionString))
             {
-                connection.Open();
                 string query = @"
                     SELECT i.FullName FROM USERS u
                     JOIN USERINFO i ON u.Id = i.UserId
                     WHERE u.Email = @Iden OR i.FullName = @Iden LIMIT 1";
 
-                using (var cmd = new MySqlCommand(query, connection))
-                {
-                    cmd.Parameters.AddWithValue("@Iden", identifier);
-                    var result = cmd.ExecuteScalar();
-                    return result?.ToString();
-                }
+                return Dapper.SqlMapper.QueryFirstOrDefault<string>(connection, query, new { Iden = identifier });
             }
         }
 
@@ -180,26 +174,23 @@ namespace Hermes
             using (var connection = new MySqlConnection(MySqlConnectionString))
             {
                 connection.Open();
-
-                // Lưu vào bảng USERS
-                string insertUserQuery = "INSERT INTO USERS (Id, Email, PublicKey, WrappedPrivateKey, Salt) VALUES (@Id, @Email, @PubKey, @WrappedPriv, @Salt)";
-                using (var cmd = new MySqlCommand(insertUserQuery, connection))
+                using (var transaction = connection.BeginTransaction())
                 {
-                    cmd.Parameters.AddWithValue("@Id", userId);
-                    cmd.Parameters.AddWithValue("@Email", email);
-                    cmd.Parameters.AddWithValue("@PubKey", pubKey);
-                    cmd.Parameters.AddWithValue("@WrappedPriv", wrappedPrivKey);
-                    cmd.Parameters.AddWithValue("@Salt", salt);
-                    cmd.ExecuteNonQuery();
-                }
+                    try
+                    {
+                        string insertUserQuery = "INSERT INTO USERS (Id, Email, PublicKey, WrappedPrivateKey, Salt) VALUES (@Id, @Email, @PubKey, @WrappedPriv, @Salt)";
+                        Dapper.SqlMapper.Execute(connection, insertUserQuery, new { Id = userId, Email = email, PubKey = pubKey, WrappedPriv = wrappedPrivKey, Salt = salt }, transaction);
 
-                // Lưu vào bảng USERINFO (liên kết khóa ngoại)
-                string insertInfoQuery = "INSERT INTO USERINFO (UserId, FullName) VALUES (@UserId, @FullName)";
-                using (var cmd = new MySqlCommand(insertInfoQuery, connection))
-                {
-                    cmd.Parameters.AddWithValue("@UserId", userId);
-                    cmd.Parameters.AddWithValue("@FullName", username);
-                    cmd.ExecuteNonQuery();
+                        string insertInfoQuery = "INSERT INTO USERINFO (UserId, FullName) VALUES (@UserId, @FullName)";
+                        Dapper.SqlMapper.Execute(connection, insertInfoQuery, new { UserId = userId, FullName = username }, transaction);
+
+                        transaction.Commit();
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
                 }
             }
         }

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using Hermes.Models;
+using Hermes.Shared.Models;
 
 namespace Hermes
 {
