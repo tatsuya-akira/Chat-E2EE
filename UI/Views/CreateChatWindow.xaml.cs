@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using Hermes.Services;
 
 namespace Hermes
 {
@@ -9,11 +11,13 @@ namespace Hermes
         public bool IsGroup { get; private set; }
         public string ChatName { get; private set; }
         public string[] Participants { get; private set; }
-        public string[] UserIds { get; private set; }
 
-        public CreateChatWindow()
+        private string _currentUserId;
+
+        public CreateChatWindow(string userId)
         {
             InitializeComponent();
+            _currentUserId = userId;
         }
 
         private void RadioButton_Checked(object sender, RoutedEventArgs e)
@@ -34,7 +38,7 @@ namespace Hermes
             }
         }
 
-        private void btnCreate_Click(object sender, RoutedEventArgs e)
+        private async void btnCreate_Click(object sender, RoutedEventArgs e)
         {
             try
             {
@@ -44,6 +48,14 @@ namespace Hermes
                     MessageBox.Show("Vui lòng nhập đối tượng nhắn tin!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
+
+                if (string.IsNullOrEmpty(_currentUserId))
+                {
+                    MessageBox.Show("Lỗi: Không xác định được danh tính người dùng. Vui lòng đăng xuất và đăng nhập lại!", "Lỗi hệ thống", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                var dbService = new DatabaseService();
 
                 if (rbGroup.IsChecked == true)
                 {
@@ -57,15 +69,36 @@ namespace Hermes
                     var targets = targetInput.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
                                              .Select(t => t.Trim())
                                              .Distinct()
-                                             .ToList();
+                                             .ToArray();
 
-                    if (targets.Count < 2)
+                    if (targets.Length < 2)
                     {
                         MessageBox.Show("Nhóm phải có tối thiểu 2 người tham gia khác.", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
                         return;
                     }
 
-                    var invalidUsers = targets.Where(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).UserId == null).ToList();
+                    List<string> validParticipantIds = new List<string>();
+                    List<string> invalidUsers = new List<string>();
+
+                    foreach (var t in targets)
+                    {
+                        string userId = AuthService.GetUserIdByIdentifier(t);
+                        
+                        if (string.IsNullOrEmpty(userId))
+                        {
+                            invalidUsers.Add(t);
+                        }
+                        else if (userId == _currentUserId)
+                        {
+                            MessageBox.Show("Bạn không thể tự thêm chính mình vào nhóm qua ô này!", "Cảnh báo", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            return;
+                        }
+                        else
+                        {
+                            validParticipantIds.Add(userId);
+                        }
+                    }
+
                     if (invalidUsers.Any())
                     {
                         MessageBox.Show("Không tìm thấy các tài khoản sau:\n" + string.Join("\n", invalidUsers), "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -74,35 +107,30 @@ namespace Hermes
 
                     IsGroup = true;
                     ChatName = groupName;
+                    Participants = validParticipantIds.ToArray();
 
-                    var participantsList = targets.Select(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).FullName).ToList();
-                    var userIdsList = targets.Select(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).UserId).ToList();
-
-                    // Optional: Get current user's full name to append to Participants
-                    string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
-                    userIdsList.Add(AuthService.CurrentUserId);
-
-                    Participants = participantsList.ToArray();
-                    UserIds = userIdsList.ToArray();
+                    await dbService.CreateConversationAsync(_currentUserId, validParticipantIds, true, groupName);
                 }
                 else
                 {
-                    var user = Hermes.Backend.Services.ConversationService.GetUserByIdentifier(targetInput);
-                    if (user.UserId == null)
+                    string userId = AuthService.GetUserIdByIdentifier(targetInput);
+
+                    if (string.IsNullOrEmpty(userId))
                     {
-                        MessageBox.Show("Không tìm thấy tài khoản này!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                        MessageBox.Show("Không tìm thấy tài khoản này trên hệ thống!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
                         return;
                     }
+                    if (userId == _currentUserId)
+                    {
+                        MessageBox.Show("Bạn không thể tự tạo cuộc trò chuyện với chính mình!", "Cảnh báo", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+
                     IsGroup = false;
-                    ChatName = user.FullName;
+                    ChatName = AuthService.GetUsernameByIdentifier(targetInput);
+                    Participants = new[] { userId };
 
-                    var participantsList = new System.Collections.Generic.List<string> { user.FullName };
-                    string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
-
-                    Participants = participantsList.ToArray();
-                    UserIds = new[] { user.UserId, AuthService.CurrentUserId };
+                    await dbService.CreateConversationAsync(_currentUserId, new List<string> { userId }, false);
                 }
 
                 this.DialogResult = true;

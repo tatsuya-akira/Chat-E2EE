@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
@@ -51,7 +51,8 @@ namespace Hermes
                 bool res = await AuthService.LoginAsync(email, password);
                 if (res)
                 {
-                    ChatWindow chat = new ChatWindow();
+                    string userId = AuthService.CurrentUserId;
+                    ChatWindow chat = new ChatWindow(userId);
                     chat.Show();
                     this.Close();
                 }

@@ -1,0 +1,375 @@
+<Window x:Class="Hermes.ChatWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:Hermes.Converters"
+        Title="Hermes - Tin nhắn được bảo mật đầu cuối" Height="650" Width="1000"
+        WindowStartupLocation="CenterScreen" Background="#F9FAFB">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        <conv:BooleanToVisibilityInverseConverter x:Key="BooleanToVisibilityInverseConverter"/>
+        <conv:SeenColorConverter         x:Key="SeenColorConverter"/>
+        <conv:IsImageUrlConverter        x:Key="IsImageUrlConverter"/>
+        <conv:IsNotImageUrlConverter     x:Key="IsNotImageUrlConverter"/>
+        <conv:BoolToOnlineColorConverter x:Key="BoolToOnlineColorConverter"/>
+        <conv:HasAvatarToVisibilityConverter x:Key="HasAvatarToVisibilityConverter"/>
+        <conv:NoAvatarToVisibilityConverter  x:Key="NoAvatarToVisibilityConverter"/>
+
+        <Style TargetType="TextBox" x:Key="ModernTextBox">
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#D1D5DB"/>
+            <Setter Property="Padding" Value="15,10"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="border" CornerRadius="20" Background="{TemplateBinding Background}" BorderThickness="{TemplateBinding BorderThickness}" BorderBrush="{TemplateBinding BorderBrush}" SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="false" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="border" Property="BorderBrush" Value="#3B82F6"/>
+                                <Setter TargetName="border" Property="BorderThickness" Value="2"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,0,5"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Border" Padding="15,10" Background="{TemplateBinding Background}" SnapsToDevicePixels="true" CornerRadius="10">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="true">
+                                <Setter TargetName="Border" Property="Background" Value="#EFF6FF"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="true">
+                                <Setter TargetName="Border" Property="Background" Value="#F3F4F6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="Button" x:Key="SendButton">
+            <Setter Property="Background" Value="#3B82F6"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" CornerRadius="20" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#2563EB"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="Button" x:Key="IconButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="20"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="8" Padding="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#F3F4F6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="320"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- LEFT SIDEBAR -->
+        <Border Grid.Column="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,0,1,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="70"/>
+                    <RowDefinition Height="60"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Padding="20,0" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1">
+                    <Grid>
+                        <TextBlock Text="Hermes Chats" FontSize="20" FontWeight="Bold" Foreground="#1F2937" VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="btnAddChat" Click="btnAddChat_Click" Content="+" Style="{StaticResource IconButton}" FontSize="22" ToolTip="Tạo cuộc trò chuyện mới"/>
+                            <Button x:Name="btnSettings" Click="btnSettings_Click" Content="⚙" Style="{StaticResource IconButton}" ToolTip="Cài đặt"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1" Padding="15,10">
+                    <TextBox x:Name="txtSearch"
+                             Style="{StaticResource ModernTextBox}"
+                             Text="Tìm kiếm người thân, bạn bè..."
+                             Foreground="#9CA3AF"
+                             GotFocus="txtSearch_GotFocus"
+                             LostFocus="txtSearch_LostFocus"
+                             TextChanged="txtSearch_TextChanged"/>
+                </Border>
+
+                <ListBox x:Name="lstChats" Grid.Row="2"
+                         BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         SelectionChanged="lstChats_SelectionChanged"
+                         Padding="10,5">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="50"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Avatar column with online dot -->
+                                <Grid Grid.Column="0" Width="45" Height="45">
+                                    <!-- Real avatar image (if available) -->
+                                    <Border CornerRadius="22" ClipToBounds="True" Width="45" Height="45"
+                                            Visibility="{Binding HasAvatar, Converter={StaticResource HasAvatarToVisibilityConverter}}">
+                                        <Image Source="{Binding AvatarUrl}" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <!-- Initials fallback -->
+                                    <Ellipse Width="45" Height="45"
+                                             Visibility="{Binding HasAvatar, Converter={StaticResource NoAvatarToVisibilityConverter}}">
+                                        <Ellipse.Fill>
+                                            <SolidColorBrush Color="{Binding AvatarColor}"/>
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                    <TextBlock Text="{Binding Initials}" Foreground="White" FontWeight="Bold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"
+                                               Visibility="{Binding HasAvatar, Converter={StaticResource NoAvatarToVisibilityConverter}}"/>
+                                    <!-- Online status dot (bottom-right) -->
+                                    <Ellipse Width="12" Height="12"
+                                             HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                             Margin="0,0,1,1"
+                                             Stroke="White" StrokeThickness="2"
+                                             Fill="{Binding IsOnline, Converter={StaticResource BoolToOnlineColorConverter}}"/>
+                                </Grid>
+
+                                <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding ChatName}" FontWeight="SemiBold" Foreground="#1F2937" FontSize="14"/>
+                                    <TextBlock Text="{Binding LastMessage}" FontSize="12" Foreground="#6B7280" TextTrimming="CharacterEllipsis" MaxWidth="180"/>
+                                </StackPanel>
+                                <TextBlock Grid.Column="2" Text="{Binding LastMessageTime}" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Top" Margin="0,5,0,0"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+
+        <!-- EMPTY STATE -->
+        <Grid Grid.Column="1" x:Name="EmptyStateArea" Background="#F9FAFB">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock Text="💬" FontSize="60" HorizontalAlignment="Center" Foreground="#D1D5DB"/>
+                <TextBlock Text="Chọn cuộc trò chuyện để bắt đầu" FontSize="18" Foreground="#6B7280" FontWeight="SemiBold" Margin="0,15,0,0"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- CHAT AREA -->
+        <Grid Grid.Column="1" x:Name="ChatArea" Background="#F9FAFB" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="70"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="85"/>
+            </Grid.RowDefinitions>
+
+            <!-- HEADER -->
+            <Border Grid.Row="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="25,0">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <!-- Peer avatar with online dot -->
+                        <Grid Margin="0,0,15,0" Width="45" Height="45">
+                            <!-- Real avatar -->
+                            <Border x:Name="headerAvatarBorder" CornerRadius="22" ClipToBounds="True"
+                                    Width="45" Height="45" Visibility="Collapsed">
+                                <Image x:Name="headerAvatarImg" Stretch="UniformToFill"/>
+                            </Border>
+                            <!-- Initials fallback -->
+                            <Ellipse x:Name="headerAvatarEllipse" Width="45" Height="45" Fill="#9CA3AF"/>
+                            <TextBlock Text="{Binding ElementName=lstChats, Path=SelectedItem.Initials}"
+                                       x:Name="headerAvatarInitials"
+                                       Foreground="White" FontWeight="Bold"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
+                            <!-- Online status dot -->
+                            <Ellipse x:Name="headerOnlineDot" Width="12" Height="12"
+                                     HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                     Margin="0,0,1,1"
+                                     Stroke="White" StrokeThickness="2"
+                                     Fill="#9CA3AF"/>
+                        </Grid>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="txtCurrentChatName" Text="Chọn cuộc trò chuyện" FontSize="18" FontWeight="Bold" Foreground="#1F2937"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="statusDot" Width="8" Height="8" Fill="#9CA3AF" Margin="0,0,5,0"/>
+                                <TextBlock x:Name="txtOnlineStatus" Text="Ngoại tuyến" Foreground="#9CA3AF" FontSize="12" FontWeight="SemiBold"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <TextBlock Text="🔒 Mã hóa E2EE" Foreground="#10B981" Margin="0,0,20,0" FontSize="13" FontStyle="Italic" VerticalAlignment="Center"/>
+                        <Button x:Name="btnVoiceCall" Click="btnVoiceCall_Click" Content="📞" Style="{StaticResource IconButton}" Margin="0,0,5,0" ToolTip="Gọi thoại"/>
+                        <Button x:Name="btnVideoCall" Click="btnVideoCall_Click" Content="📹" Style="{StaticResource IconButton}" Margin="0,0,5,0" ToolTip="Gọi video"/>
+                        <Button x:Name="btnMoreOptions" Click="btnMoreOptions_Click" Content="⋯" Style="{StaticResource IconButton}" ToolTip="Thêm tùy chọn">
+                            <Button.ContextMenu>
+                                <ContextMenu x:Name="menuMoreOptions">
+                                    <MenuItem Header="👥 Thông tin nhóm" Click="menuGroupInfo_Click"/>
+                                    <MenuItem Header="📋 Danh sách thành viên" Click="menuMembers_Click"/>
+                                    <Separator/>
+                                    <MenuItem Header="🚪 Rời khỏi cuộc trò chuyện" Click="menuLeave_Click" Foreground="#EF4444"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- MESSAGES -->
+            <ScrollViewer x:Name="svMessages" Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="25" VerticalAlignment="Top">
+                    <Border Background="White" BorderThickness="1" BorderBrush="#E5E7EB" CornerRadius="12" Padding="10,5" HorizontalAlignment="Center" Margin="0,0,0,25">
+                        <TextBlock Text="Hôm nay" FontSize="12" Foreground="#6B7280" FontWeight="SemiBold"/>
+                    </Border>
+
+                    <ItemsControl x:Name="icMessages">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <!-- Tin nhắn người khác -->
+                                    <Grid Margin="0,0,0,15" HorizontalAlignment="Left" Visibility="{Binding IsMine, Converter={StaticResource BooleanToVisibilityInverseConverter}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Grid.Column="0" Margin="0,0,10,0" VerticalAlignment="Top">
+                                            <Ellipse Width="32" Height="32" Fill="#9CA3AF"/>
+                                            <TextBlock Text="{Binding SenderName}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="11" MaxWidth="30" TextTrimming="CharacterEllipsis"/>
+                                        </Grid>
+                                        <StackPanel Grid.Column="1">
+                                            <!-- Image message -->
+                                            <Border MaxWidth="300" MaxHeight="250" CornerRadius="12" ClipToBounds="True"
+                                                    Visibility="{Binding Content, Converter={StaticResource IsImageUrlConverter}}">
+                                                <Image Source="{Binding Content}" Stretch="Uniform"/>
+                                            </Border>
+                                            <!-- Text message -->
+                                            <Border Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="20,20,20,0" Padding="15,10" MaxWidth="500"
+                                                    Visibility="{Binding Content, Converter={StaticResource IsNotImageUrlConverter}}">
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="#1F2937" FontSize="14" LineHeight="20"/>
+                                            </Border>
+                                            <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="5,4,0,0"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <!-- Tin nhắn của mình -->
+                                    <Grid Margin="0,0,0,15" HorizontalAlignment="Right" Visibility="{Binding IsMine, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <StackPanel HorizontalAlignment="Right">
+                                            <!-- Image message -->
+                                            <Border MaxWidth="300" MaxHeight="250" CornerRadius="12" ClipToBounds="True"
+                                                    Visibility="{Binding Content, Converter={StaticResource IsImageUrlConverter}}">
+                                                <Image Source="{Binding Content}" Stretch="Uniform"/>
+                                            </Border>
+                                            <!-- Text message -->
+                                            <Border Background="#3B82F6" CornerRadius="20,20,0,20" Padding="15,10" MaxWidth="500"
+                                                    Visibility="{Binding Content, Converter={StaticResource IsNotImageUrlConverter}}">
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White" FontSize="14" LineHeight="20"/>
+                                            </Border>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,5,0">
+                                                <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="0,0,5,0"/>
+                                                <TextBlock Text="{Binding SeenIcon}" FontSize="10" FontWeight="Bold"
+                                                           Foreground="{Binding IsSeen, Converter={StaticResource SeenColorConverter}}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- EMOJI PICKER POPUP -->
+            <Popup x:Name="emojiPopup" Grid.Row="2" PlacementTarget="{Binding ElementName=btnEmoji}" Placement="Top" StaysOpen="False">
+                <Border Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="12" Padding="10">
+                    <WrapPanel Width="280">
+                        <Button Content="😀" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="😂" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="😍" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="🥰" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="😎" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="😭" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="😡" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="🥺" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="👍" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="👎" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="❤️" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="🔥" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="🎉" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="😢" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="🤣" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="😴" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="🤔" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="👏" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="🙏" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                        <Button Content="💪" Click="btnEmojiPick_Click" Style="{StaticResource IconButton}" FontSize="22"/>
+                    </WrapPanel>
+                </Border>
+            </Popup>
+
+            <!-- INPUT BAR -->
+            <Border Grid.Row="3" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="20,10">
+                <Grid VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button x:Name="btnAttach" Grid.Column="0" Click="btnAttach_Click" Content="📎" Style="{StaticResource IconButton}" Margin="0,0,5,0" ToolTip="Gửi tệp / ảnh"/>
+                    <Button x:Name="btnEmoji" Grid.Column="1" Click="btnEmoji_Click" Content="🙂" Style="{StaticResource IconButton}" Margin="0,0,10,0" ToolTip="Chọn biểu tượng"/>
+
+                    <TextBox x:Name="txtMessageInput" Grid.Column="2" Style="{StaticResource ModernTextBox}"
+                             Foreground="#1F2937" Height="45"
+                             KeyDown="txtMessageInput_KeyDown"/>
+
+                    <Button Click="btnSendMessage_Click" Grid.Column="3" Content="GỬI" Style="{StaticResource SendButton}" Margin="15,0,0,0" Padding="30,0" Height="45"/>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

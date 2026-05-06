@@ -1,0 +1,248 @@
+<Window x:Class="Hermes.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:Hermes.Converters"
+        Title="Hồ sơ cá nhân" Height="640" Width="430"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#F9FAFB">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        <conv:HasAvatarToVisibilityConverter  x:Key="HasAvatarToVisibilityConverter"/>
+        <conv:NoAvatarToVisibilityConverter   x:Key="NoAvatarToVisibilityConverter"/>
+
+        <!-- Reusable label style -->
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#6B7280"/>
+            <Setter Property="Margin"     Value="0,12,0,4"/>
+        </Style>
+
+        <!-- Reusable text-input style -->
+        <Style x:Key="FieldBox" TargetType="TextBox">
+            <Setter Property="Height"                    Value="40"/>
+            <Setter Property="Padding"                   Value="12,0"/>
+            <Setter Property="VerticalContentAlignment"  Value="Center"/>
+            <Setter Property="FontSize"                  Value="14"/>
+            <Setter Property="Foreground"                Value="#1F2937"/>
+            <Setter Property="Background"                Value="White"/>
+            <Setter Property="BorderBrush"               Value="#D1D5DB"/>
+            <Setter Property="BorderThickness"           Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="bd" CornerRadius="8"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#3B82F6"/>
+                                <Setter TargetName="bd" Property="BorderThickness" Value="2"/>
+                            </Trigger>
+                            <Trigger Property="IsReadOnly" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#F3F4F6"/>
+                                <Setter Property="Foreground" Value="#6B7280"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Primary action button -->
+        <Style x:Key="PrimaryBtn" TargetType="Button">
+            <Setter Property="Height"          Value="42"/>
+            <Setter Property="Background"      Value="#3B82F6"/>
+            <Setter Property="Foreground"      Value="White"/>
+            <Setter Property="FontWeight"      Value="Bold"/>
+            <Setter Property="FontSize"        Value="14"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" CornerRadius="8"
+                                Background="{TemplateBinding Background}"
+                                Padding="0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#2563EB"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Danger button (logout) -->
+        <Style x:Key="DangerBtn" TargetType="Button" BasedOn="{StaticResource PrimaryBtn}">
+            <Setter Property="Background" Value="#EF4444"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#DC2626"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Ghost / outline button -->
+        <Style x:Key="GhostBtn" TargetType="Button">
+            <Setter Property="Height"          Value="38"/>
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderBrush"     Value="#D1D5DB"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground"      Value="#374151"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" CornerRadius="8"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="12,0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#F3F4F6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <!-- Gradient header strip -->
+        <Grid.RowDefinitions>
+            <RowDefinition Height="160"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ── HEADER ── -->
+        <Border Grid.Row="0">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#3B82F6" Offset="0"/>
+                    <GradientStop Color="#6366F1" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <!-- Avatar with clickable overlay -->
+                <Grid Margin="0,0,0,10">
+                    <Button x:Name="btnChangeAvatar" Click="btnChangeAvatar_Click"
+                            ToolTip="Nhấn để đổi ảnh đại diện"
+                            BorderThickness="0" Background="Transparent" Cursor="Hand"
+                            Width="90" Height="90">
+                        <Grid Width="90" Height="90">
+                            <!-- Avatar image (shown when HasAvatar=true) -->
+                            <Border CornerRadius="45" ClipToBounds="True"
+                                    Visibility="{Binding HasAvatar, Converter={StaticResource HasAvatarToVisibilityConverter}}">
+                                <Image x:Name="imgAvatar" Stretch="UniformToFill" Width="90" Height="90"/>
+                            </Border>
+                            <!-- Initials fallback (shown when no avatar) -->
+                            <Ellipse Width="90" Height="90" Fill="#FFFFFF" Opacity="0.25"
+                                     Visibility="{Binding HasAvatar, Converter={StaticResource NoAvatarToVisibilityConverter}}"/>
+                            <TextBlock x:Name="txtInitials" Text="?" FontSize="32" FontWeight="Bold"
+                                       Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Visibility="{Binding HasAvatar, Converter={StaticResource NoAvatarToVisibilityConverter}}"/>
+                            <!-- Camera overlay (always visible on hover via style) -->
+                            <Border CornerRadius="45" Background="#80000000" Opacity="0"
+                                    x:Name="avatarOverlay">
+                                <TextBlock Text="📷" FontSize="28"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </Grid>
+                    </Button>
+                </Grid>
+                <TextBlock x:Name="txtHeaderName" Text="Người dùng"
+                           FontSize="18" FontWeight="Bold" Foreground="White"
+                           HorizontalAlignment="Center"/>
+                <TextBlock x:Name="txtHeaderEmail" Text=""
+                           FontSize="12" Foreground="#BFDBFE"
+                           HorizontalAlignment="Center" Margin="0,2,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── BODY ── -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="24,16,24,24">
+
+                <!-- ── Profile section ── -->
+                <TextBlock Text="THÔNG TIN CÁ NHÂN" Style="{StaticResource FieldLabel}"
+                           FontSize="11" Margin="0,0,0,4"/>
+                <Border Background="White" CornerRadius="12" Padding="16,12"
+                        BorderBrush="#E5E7EB" BorderThickness="1">
+                    <StackPanel>
+                        <!-- Username (read-only) -->
+                        <TextBlock Text="Tên đăng nhập" Style="{StaticResource FieldLabel}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="txtUsername" Style="{StaticResource FieldBox}" IsReadOnly="True"/>
+
+                        <!-- Display Name (editable) -->
+                        <TextBlock Text="Tên hiển thị" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/>
+                        <TextBox x:Name="txtDisplayName" Style="{StaticResource FieldBox}" MaxLength="50"/>
+
+                        <!-- Bio (editable) -->
+                        <TextBlock Text="Giới thiệu bản thân" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/>
+                        <TextBox x:Name="txtBio" Style="{StaticResource FieldBox}"
+                                 Height="60" TextWrapping="Wrap" MaxLength="200"
+                                 AcceptsReturn="False" VerticalContentAlignment="Top" Padding="12,8"/>
+
+                        <!-- Created At (read-only) -->
+                        <TextBlock Text="Ngày tham gia" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/>
+                        <TextBox x:Name="txtCreatedAt" Style="{StaticResource FieldBox}" IsReadOnly="True"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Save profile button -->
+                <Button x:Name="btnSaveProfile" Content="💾  Lưu thay đổi"
+                        Style="{StaticResource PrimaryBtn}"
+                        Margin="0,12,0,0" Click="btnSaveProfile_Click"/>
+
+                <!-- ── Security section ── -->
+                <TextBlock Text="BẢO MẬT" Style="{StaticResource FieldLabel}"
+                           FontSize="11" Margin="0,20,0,4"/>
+
+                <Border Background="White" CornerRadius="12" Padding="16,12"
+                        BorderBrush="#E5E7EB" BorderThickness="1">
+                    <StackPanel>
+                        <!-- Email verified badge -->
+                        <Border x:Name="badgeVerified" CornerRadius="8" Padding="12,8" Margin="0,0,0,12">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                    <GradientStop Color="#ECFDF5" Offset="0"/>
+                                    <GradientStop Color="#D1FAE5" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <TextBlock x:Name="txtEmailVerified"
+                                       Text="✅ Đã xác thực Email"
+                                       FontSize="13" FontWeight="SemiBold" Foreground="#059669"/>
+                        </Border>
+
+                        <!-- Change Password button -->
+                        <Button x:Name="btnChangePassword" Content="🔑  Đổi mật khẩu (gửi email)"
+                                Style="{StaticResource GhostBtn}" Height="42"
+                                Click="btnChangePassword_Click"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ── Logout ── -->
+                <Button x:Name="btnLogout" Content="🚪  Đăng xuất"
+                        Style="{StaticResource DangerBtn}"
+                        Margin="0,20,0,0" Click="btnLogout_Click"/>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

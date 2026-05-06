@@ -15,5 +15,12 @@ namespace Hermes
             base.OnStartup(e);
             Env.TraversePath().Load();
         }
+
+        public static string CurrentUserId { get; set; }
+
+        public App()
+        {
+            DotNetEnv.Env.Load();
+        }
     }
 }
