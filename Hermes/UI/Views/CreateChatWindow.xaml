@@ -1,0 +1,39 @@
+<Window x:Class="Hermes.CreateChatWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Tạo cuộc trò chuyện" Height="300" Width="400"
+        WindowStartupLocation="CenterOwner" Background="#F9FAFB" ResizeMode="NoResize">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Tạo cuộc trò chuyện mới" FontSize="18" FontWeight="Bold" Foreground="#1F2937" HorizontalAlignment="Center" Margin="0,0,0,15"/>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,15" HorizontalAlignment="Center">
+            <RadioButton x:Name="rbSingle" Content="Cá nhân" IsChecked="True" Margin="0,0,20,0" Checked="RadioButton_Checked"/>
+            <RadioButton x:Name="rbGroup" Content="Nhóm" Checked="RadioButton_Checked"/>
+        </StackPanel>
+
+        <StackPanel x:Name="spGroupName" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,10">
+            <TextBlock Text="Tên nhóm:" FontWeight="SemiBold" Foreground="#4B5563" Margin="0,0,0,5"/>
+            <TextBox x:Name="txtGroupName" Height="30" Padding="5"/>
+        </StackPanel>
+
+        <TextBlock x:Name="lblTarget" Grid.Row="3" Text="Nhập Username hoặc Email:" FontWeight="SemiBold" Foreground="#4B5563" Margin="0,0,0,5"/>
+        <TextBox x:Name="txtTarget" Grid.Row="4" Height="60" TextWrapping="Wrap" AcceptsReturn="True" Padding="5" VerticalScrollBarVisibility="Auto" ToolTip="Nhập danh sách cách nhau bằng dấu phẩy cho nhóm"/>
+
+        <Button Grid.Row="5" Content="Tạo" Height="35" Background="#3B82F6" Foreground="White" FontWeight="Bold" Cursor="Hand" Click="btnCreate_Click" Margin="0,15,0,0">
+            <Button.Resources>
+                <Style TargetType="Border">
+                    <Setter Property="CornerRadius" Value="5"/>
+                </Style>
+            </Button.Resources>
+        </Button>
+    </Grid>
+</Window>
