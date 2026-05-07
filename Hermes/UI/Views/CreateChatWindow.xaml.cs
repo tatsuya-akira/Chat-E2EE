@@ -34,7 +34,9 @@ namespace Hermes
             }
         }
 
-        private void btnCreate_Click(object sender, RoutedEventArgs e)
+        // Đảm bảo hàm này nằm bên trong: public partial class CreateChatWindow : Window { ... }
+
+        private async void btnCreate_Click(object sender, RoutedEventArgs e)
         {
             try
             {
@@ -55,9 +57,7 @@ namespace Hermes
                     }
 
                     var targets = targetInput.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                                             .Select(t => t.Trim())
-                                             .Distinct()
-                                             .ToList();
+                                             .Select(t => t.Trim()).Distinct().ToList();
 
                     if (targets.Count < 2)
                     {
@@ -65,20 +65,24 @@ namespace Hermes
                         return;
                     }
 
-                    var invalidUsers = targets.Where(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).UserId == null).ToList();
-                    if (invalidUsers.Any())
+                    var participantsList = new System.Collections.Generic.List<string>();
+                    var userIdsList = new System.Collections.Generic.List<string>();
+
+                    foreach (var target in targets)
                     {
-                        MessageBox.Show("Không tìm thấy các tài khoản sau:\n" + string.Join("\n", invalidUsers), "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
-                        return;
+                        var user = await Hermes.Backend.Services.ApiClient.GetUserByIdentifierAsync(target);
+                        if (user == null)
+                        {
+                            MessageBox.Show($"Không tìm thấy tài khoản: {target}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                            return;
+                        }
+                        participantsList.Add(user.FullName);
+                        userIdsList.Add(user.UserId);
                     }
 
                     IsGroup = true;
                     ChatName = groupName;
 
-                    var participantsList = targets.Select(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).FullName).ToList();
-                    var userIdsList = targets.Select(t => Hermes.Backend.Services.ConversationService.GetUserByIdentifier(t).UserId).ToList();
-
-                    // Optional: Get current user's full name to append to Participants
                     string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
                     if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
                     userIdsList.Add(AuthService.CurrentUserId);
@@ -88,12 +92,13 @@ namespace Hermes
                 }
                 else
                 {
-                    var user = Hermes.Backend.Services.ConversationService.GetUserByIdentifier(targetInput);
-                    if (user.UserId == null)
+                    var user = await Hermes.Backend.Services.ApiClient.GetUserByIdentifierAsync(targetInput);
+                    if (user == null)
                     {
                         MessageBox.Show("Không tìm thấy tài khoản này!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
                         return;
                     }
+
                     IsGroup = false;
                     ChatName = user.FullName;
 
@@ -110,7 +115,7 @@ namespace Hermes
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Lỗi kết nối hoặc hệ thống: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Lỗi kết nối: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }

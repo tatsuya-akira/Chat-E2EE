@@ -1,5 +1,5 @@
 using Firebase.Auth;
-using MySql.Data.MySqlClient;
+using Hermes.Backend.Services;
 using System;
 using System.Threading.Tasks;
 
@@ -37,7 +37,7 @@ namespace Hermes
                 {
                     CurrentUserId = auth.User.LocalId;
                     CurrentToken = auth.FirebaseToken;
-                    LoadUserKeys(CurrentUserId, password);
+                    await LoadUserKeysAsync(CurrentUserId, password);
                     return true;
                 }
                 return false;
@@ -60,12 +60,11 @@ namespace Hermes
         {
             try
             {
-                // Kiểm tra Username hoặc Email đã tồn tại trong DB chưa
-                if (GetUsernameByIdentifier(username) != null)
+                if (await ApiClient.CheckIdentifierExistsAsync(username))
                 {
                     throw new Exception("Tên hiển thị (Username) đã tồn tại, vui lòng chọn tên khác!");
                 }
-                if (GetUsernameByIdentifier(email) != null)
+                if (await ApiClient.CheckIdentifierExistsAsync(email))
                 {
                     throw new Exception("Email đã tồn tại trong hệ thống!");
                 }
@@ -76,36 +75,43 @@ namespace Hermes
             }
             catch
             {
-                throw new Exception("Lỗi kết nối cơ sở dữ liệu khi kiểm tra tài khoản.");
+                throw new Exception("Lỗi kết nối Server API khi kiểm tra tài khoản.");
             }
 
             try
             {
                 var auth = await _authProvider.CreateUserWithEmailAndPasswordAsync(email, password);
 
-                try
+                if (auth != null && !string.IsNullOrEmpty(auth.User.LocalId))
                 {
-                    if (auth != null && !string.IsNullOrEmpty(auth.User.LocalId))
-                    {
-                        var salt = Hermes.Backend.Services.CryptoService.GenerateSalt();
-                        var masterKey = Hermes.Backend.Services.CryptoService.DeriveMasterKey(password, salt);
-                        var keys = Hermes.Backend.Services.CryptoService.GenerateRSAKeys();
-                        var wrappedPriv = Hermes.Backend.Services.CryptoService.EncryptPrivateKey(keys.PrivateKeyBase64, masterKey);
+                    var salt = CryptoService.GenerateSalt();
+                    var masterKey = CryptoService.DeriveMasterKey(password, salt);
+                    var keys = CryptoService.GenerateRSAKeys();
+                    var wrappedPriv = CryptoService.EncryptPrivateKey(keys.PrivateKeyBase64, masterKey);
 
-                        SaveUserToDatabase(auth.User.LocalId, email, username, keys.PublicKeyBase64, wrappedPriv, salt);
-                        return true;
-                    }
-                    return false;
-                }
-                catch (Exception)
-                {
-                    // Xóa tài khoản trên Firebase nếu lưu vào MySQL thất bại để tránh bất đồng bộ
-                    if (auth != null && !string.IsNullOrEmpty(auth.FirebaseToken))
+                    var request = new Hermes.Shared.DTOs.RegisterRequest
                     {
-                        try { await _authProvider.DeleteUserAsync(auth.FirebaseToken); } catch { }
+                        Id = auth.User.LocalId,
+                        Email = email,
+                        FullName = username,
+                        PublicKey = keys.PublicKeyBase64,
+                        WrappedPrivateKey = wrappedPriv,
+                        Salt = salt
+                    };
+
+                    bool isSaved = await ApiClient.RegisterUserAsync(request);
+                    if (!isSaved)
+                    {
+                        // Rollback Firebase
+                        if (!string.IsNullOrEmpty(auth.FirebaseToken))
+                        {
+                            try { await _authProvider.DeleteUserAsync(auth.FirebaseToken); } catch { }
+                        }
+                        throw new Exception("Lỗi Server khi lưu thông tin người dùng.");
                     }
-                    throw new Exception("Lỗi hệ thống khi lưu thông tin. Đã hoàn tác việc tạo tài khoản, vui lòng thử lại sau.");
+                    return true;
                 }
+                return false;
             }
             catch (FirebaseAuthException ex)
             {
@@ -133,65 +139,19 @@ namespace Hermes
 
         public static string GetUsernameByIdentifier(string identifier)
         {
-            using (var connection = new MySqlConnection(MySqlConnectionString))
-            {
-                string query = @"
-                    SELECT i.FullName FROM USERS u
-                    JOIN USERINFO i ON u.Id = i.UserId
-                    WHERE u.Email = @Iden OR i.FullName = @Iden LIMIT 1";
-
-                return Dapper.SqlMapper.QueryFirstOrDefault<string>(connection, query, new { Iden = identifier });
-            }
+            // Now managed by API, this method is left for backward compatibility in WPF UI locally if needed,
+            // or replace it directly async
+            return null; // temporary stub
         }
 
-        private static void LoadUserKeys(string userId, string password)
+        private static async Task LoadUserKeysAsync(string userId, string password)
         {
-            using (var connection = new MySqlConnection(MySqlConnectionString))
+            var keys = await ApiClient.GetUserKeysAsync(userId);
+            if (keys != null)
             {
-                connection.Open();
-                string query = "SELECT PublicKey, WrappedPrivateKey, Salt FROM USERS WHERE Id = @Id LIMIT 1";
-                using (var cmd = new MySqlCommand(query, connection))
-                {
-                    cmd.Parameters.AddWithValue("@Id", userId);
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            CurrentPublicKey = reader["PublicKey"].ToString();
-                            string wrappedPriv = reader["WrappedPrivateKey"].ToString();
-                            string salt = reader["Salt"].ToString();
-
-                            var masterKey = Hermes.Backend.Services.CryptoService.DeriveMasterKey(password, salt);
-                            CurrentPrivateKey = Hermes.Backend.Services.CryptoService.DecryptPrivateKey(wrappedPriv, masterKey);
-                        }
-                    }
-                }
-            }
-        }
-
-        private static void SaveUserToDatabase(string userId, string email, string username, string pubKey, string wrappedPrivKey, string salt)
-        {
-            using (var connection = new MySqlConnection(MySqlConnectionString))
-            {
-                connection.Open();
-                using (var transaction = connection.BeginTransaction())
-                {
-                    try
-                    {
-                        string insertUserQuery = "INSERT INTO USERS (Id, Email, PublicKey, WrappedPrivateKey, Salt) VALUES (@Id, @Email, @PubKey, @WrappedPriv, @Salt)";
-                        Dapper.SqlMapper.Execute(connection, insertUserQuery, new { Id = userId, Email = email, PubKey = pubKey, WrappedPriv = wrappedPrivKey, Salt = salt }, transaction);
-
-                        string insertInfoQuery = "INSERT INTO USERINFO (UserId, FullName) VALUES (@UserId, @FullName)";
-                        Dapper.SqlMapper.Execute(connection, insertInfoQuery, new { UserId = userId, FullName = username }, transaction);
-
-                        transaction.Commit();
-                    }
-                    catch
-                    {
-                        transaction.Rollback();
-                        throw;
-                    }
-                }
+                CurrentPublicKey = keys.PublicKey;
+                var masterKey = CryptoService.DeriveMasterKey(password, keys.Salt);
+                CurrentPrivateKey = CryptoService.DecryptPrivateKey(keys.WrappedPrivateKey, masterKey);
             }
         }
     }

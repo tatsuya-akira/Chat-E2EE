@@ -1,10 +1,11 @@
-﻿using System;
+﻿using Hermes.Backend.Services;
+using Hermes.Shared.Models;
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using Hermes.Shared.Models;
 
 namespace Hermes
 {
@@ -16,36 +17,63 @@ namespace Hermes
         {
             InitializeComponent();
             Chats = new ObservableCollection<ChatModel>();
-
-            // Fake data init
-            LoadMockData();
-
             lstChats.ItemsSource = Chats;
+
+            // Thay thế LoadMockData bằng dữ liệu thật
+            LoadRealChatsAsync();
+        }
+
+        private async void LoadRealChatsAsync()
+        {
+            // Gọi API lấy danh sách phòng chat của mình
+            var myChats = await ApiClient.GetMyChatsAsync(AuthService.CurrentUserId);
+
+            Chats.Clear();
+            foreach (var c in myChats)
+            {
+                string displayName = c.IsGroup ? c.GroupName : c.OtherUserName;
+
+                Chats.Add(new ChatModel
+                {
+                    ChatId = c.ChatId,
+                    ChatName = displayName,
+                    Initials = c.IsGroup ? "G" : (string.IsNullOrEmpty(displayName) ? "" : displayName.Substring(0, 1).ToUpper()),
+                    AvatarColor = c.IsGroup ? "#10B981" : "#F59E0B",
+                    LastMessage = "Bấm để xem tin nhắn...",
+                    LastMessageTime = ""
+                });
+            }
+
+            // Tự động chọn phòng đầu tiên
             if (Chats.Any())
             {
                 lstChats.SelectedIndex = 0;
             }
         }
 
-        private void LoadMockData()
-        {
-            var chat1 = new ChatModel { ChatId = "1", ChatName = "Hoàng Hải", Initials = "H", AvatarColor = "#9CA3AF", LastMessage = "You: Nghe hợp lý đấy! Mấy giờ đi...", LastMessageTime = "10:35 AM" };
-            chat1.Messages.Add(new MessageModel { SenderName = "Hoàng Hải", Content = "Cuối tuần này cậu có rảnh không? Bọn mình đi cà phê rồi xem phim luôn nhé?", Time = "10:31 AM", IsMine = false });
-            chat1.Messages.Add(new MessageModel { SenderName = "You", Content = "Nghe hợp lý đấy! Mấy giờ đi được để mình đặt vé trước?", Time = "10:35 AM", IsMine = true });
-
-            var chat2 = new ChatModel { ChatId = "2", ChatName = "Team Phượt Xuyên Việt", Initials = "T", AvatarColor = "#10B981", LastMessage = "Tuấn: Cuối tuần nhớ mang theo áo...", LastMessageTime = "09:15 AM" };
-            chat2.Messages.Add(new MessageModel { SenderName = "Tuấn", Content = "Cuối tuần nhớ mang theo áo khoác nhé mọi người!", Time = "09:10 AM", IsMine = false });
-
-            Chats.Add(chat1);
-            Chats.Add(chat2);
-        }
-
-        private void lstChats_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private async void lstChats_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (lstChats.SelectedItem is ChatModel selectedChat)
             {
-                txtCurrentChatName.Text = selectedChat.ChatName;
-                icMessages.ItemsSource = selectedChat.Messages;
+                // 1. --- THÊM ĐOẠN NÀY ĐỂ CHUYỂN GIAO DIỆN ---
+                // (Thay tên GridWelcome và GridChat bằng đúng x:Name trong file ChatWindow.xaml của bạn)
+                if (GridWelcome != null) GridWelcome.Visibility = Visibility.Collapsed;
+                if (GridChat != null) GridChat.Visibility = Visibility.Visible;
+
+                // 2. Clear tin nhắn cũ trên UI
+                selectedChat.Messages.Clear();
+
+                // 3. Lấy lịch sử từ Database
+                var history = await Backend.Services.ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId));
+
+                // 4. Đổ dữ liệu vào UI
+                foreach (var msg in history)
+                {
+                    msg.IsMine = (msg.SenderId == AuthService.CurrentUserId);
+                    selectedChat.Messages.Add(msg);
+                }
+
+                svMessages.ScrollToEnd();
             }
         }
 
@@ -56,7 +84,9 @@ namespace Hermes
             sw.ShowDialog();
         }
 
-        private void btnAddChat_Click(object sender, RoutedEventArgs e)
+        // Đảm bảo hàm này nằm bên trong: public partial class ChatWindow : Window { ... }
+
+        private async void btnAddChat_Click(object sender, RoutedEventArgs e)
         {
             CreateChatWindow createChat = new CreateChatWindow();
             createChat.Owner = this;
@@ -66,17 +96,25 @@ namespace Hermes
                 {
                     string newChatName = createChat.ChatName;
                     var userIds = createChat.UserIds.ToList();
-                    int newConvId = Hermes.Backend.Services.ConversationService.CreateConversation(createChat.IsGroup, createChat.IsGroup ? newChatName : null, userIds);
 
-                    var newChat = new ChatModel 
-                    { 
-                        ChatId = newConvId.ToString(), 
-                        ChatName = newChatName, 
-                        Initials = createChat.IsGroup ? "G" : (newChatName.Length > 0 ? newChatName.Substring(0, 1).ToUpper() : ""), 
-                        AvatarColor = createChat.IsGroup ? "#10B981" : "#F59E0B", 
-                        LastMessage = "Bắt đầu cuộc trò chuyện...", 
-                        LastMessageTime = DateTime.Now.ToString("hh:mm tt") 
+                    int newConvId = await Hermes.Backend.Services.ApiClient.CreateConversationAsync(createChat.IsGroup, createChat.IsGroup ? newChatName : null, userIds);
+
+                    if (newConvId == -1)
+                    {
+                        MessageBox.Show("Lỗi Server khi tạo cuộc trò chuyện.", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                        return;
+                    }
+
+                    var newChat = new ChatModel
+                    {
+                        ChatId = newConvId.ToString(),
+                        ChatName = newChatName,
+                        Initials = createChat.IsGroup ? "G" : (newChatName.Length > 0 ? newChatName.Substring(0, 1).ToUpper() : ""),
+                        AvatarColor = createChat.IsGroup ? "#10B981" : "#F59E0B",
+                        LastMessage = "Bắt đầu cuộc trò chuyện...",
+                        LastMessageTime = DateTime.Now.ToString("hh:mm tt")
                     };
+
                     Chats.Insert(0, newChat);
                     lstChats.SelectedItem = newChat;
                 }
@@ -87,19 +125,61 @@ namespace Hermes
             }
         }
 
-        private void btnSendMessage_Click(object sender, RoutedEventArgs e)
+        private async void btnSendMessage_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrWhiteSpace(txtMessageInput.Text)) return;
+
             if (lstChats.SelectedItem is ChatModel currentChat)
             {
-                currentChat.Messages.Add(new MessageModel { SenderName = "You", Content = txtMessageInput.Text.Trim(), Time = DateTime.Now.ToString("hh:mm tt"), IsMine = true });
-                currentChat.LastMessage = "You: " + txtMessageInput.Text.Trim();
-                currentChat.LastMessageTime = DateTime.Now.ToString("hh:mm tt");
-                txtMessageInput.Text = "";
+                string plainText = txtMessageInput.Text.Trim();
+                string currentTime = DateTime.Now.ToString("hh:mm tt");
 
-                // Scroll to bottom logically -> visual would need ScrollViewer
+                // 1. Cập nhật giao diện mượt mà (Giữ nguyên logic cũ)
+                currentChat.Messages.Add(new MessageModel { SenderName = "You", Content = plainText, Time = currentTime, IsMine = true });
+                currentChat.LastMessage = "You: " + plainText;
+                currentChat.LastMessageTime = currentTime;
+                txtMessageInput.Text = "";
                 svMessages.ScrollToEnd();
+
+                // --- 2. LOGIC BACKEND: LƯU DATABASE ---
+                try
+                {
+                    // Parse ConversationId từ ChatId của UI
+                    if (!int.TryParse(currentChat.ChatId, out int convId))
+                    {
+                        MessageBox.Show("Lỗi: ID cuộc trò chuyện không hợp lệ.");
+                        return;
+                    }
+
+                    // Tạo DTO để gửi lên Server
+                    var dto = new Hermes.Shared.DTOs.SendMessageDto
+                    {
+                        ConversationId = convId,
+                        SenderId = AuthService.CurrentUserId,
+
+                        CipherText = plainText,
+                        TimeToLive = 0,
+
+                        // TODO: Tạm thời để trống. Sau này sẽ mã hóa Session Key bằng RSA Public Key của đối phương
+                        RecipientSessionKeys = new Dictionary<string, string>()
+                    };
+
+                    // Gọi API lưu tin nhắn xuống MySQL
+                    bool isSaved = await Backend.Services.ApiClient.SaveMessageAsync(dto);
+
+                    if (isSaved)
+                    {
+                        // --- 3. BẮN SIGNALR ĐỂ REAL-TIME ---
+                        // Sẽ gọi _signalRService.SendMessageAsync(...) ở đây
+                        Console.WriteLine("Đã lưu DB thành công. Chuẩn bị bắn SignalR...");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Lỗi hệ thống khi gửi tin nhắn: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
             }
         }
+
     }
 }
