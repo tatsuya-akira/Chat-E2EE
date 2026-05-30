@@ -82,5 +82,12 @@ namespace Hermes.Backend.Services
             }
             return new List<string>();
         }
+        public async Task JoinRoomAsync(string conversationId)
+        {
+            if (_connection.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected)
+            {
+                await _connection.InvokeAsync("JoinRoom", conversationId);
+            }
+        }
     }
 }

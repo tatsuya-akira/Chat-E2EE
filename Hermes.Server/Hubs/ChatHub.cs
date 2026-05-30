@@ -68,10 +68,17 @@ namespace Hermes.Server.Hubs
             return _userConnections.Keys.ToList();
         }
 
-        // --- CÁC HÀM CŨ GIỮ NGUYÊN ---
-        public async Task SendMessage(string receiverId, string encryptedMessage)
+        // Hàm cho phép Client chui vào một phòng chat cụ thể
+        public async Task JoinRoom(string conversationId)
         {
-            await Clients.Group(receiverId).SendAsync("ReceiveMessage", Context.ConnectionId, encryptedMessage);
+            await Groups.AddToGroupAsync(Context.ConnectionId, conversationId);
+        }
+
+        // --- CÁC HÀM CŨ GIỮ NGUYÊN ---
+        public async Task SendMessage(string conversationId, string encryptedMessage)
+        {
+            // FIX TẠI ĐÂY: Đổi chữ 'Group' thành 'OthersInGroup'
+            await Clients.OthersInGroup(conversationId).SendAsync("ReceiveMessage", conversationId, encryptedMessage);
         }
 
         public async Task InitiateCall(string receiverId, string myIp, int myPort)

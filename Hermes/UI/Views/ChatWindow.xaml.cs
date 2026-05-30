@@ -6,12 +6,14 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Collections.Generic;
 
 namespace Hermes
 {
     public partial class ChatWindow : Window
     {
         public ObservableCollection<ChatModel> Chats { get; set; }
+        private SignalRService _signalRService;
 
         public ChatWindow()
         {
@@ -19,20 +21,63 @@ namespace Hermes
             Chats = new ObservableCollection<ChatModel>();
             lstChats.ItemsSource = Chats;
 
-            // Thay thế LoadMockData bằng dữ liệu thật
-            LoadRealChatsAsync();
+            // 1. Khởi tạo SignalR
+            _signalRService = new SignalRService("http://localhost:5042/chathub");
+
+            // 2. Lắng nghe sự kiện nhắn tin tới
+            _signalRService.OnReceiveMessage += SignalR_OnReceiveMessage;
+
+            // 3. Tự động Connect
+            this.Loaded += async (s, e) => {
+                // BƯỚC A: Phải đợi kết nối SignalR thành công 100%...
+                await _signalRService.ConnectAsync(AuthService.CurrentUserId);
+
+                // BƯỚC B: ...Thì mới được gọi hàm lấy danh sách chat & chui vào phòng!
+                LoadRealChatsAsync();
+            };
+
+            // (ĐÃ XÓA LoadRealChatsAsync() Ở ĐÂY)
+        }
+
+        // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
+        private void SignalR_OnReceiveMessage(string conversationId, string message)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                // Tìm đúng phòng chat đang nhận tin nhắn (Dựa vào ID thay vì SelectedItem)
+                var targetChat = Chats.FirstOrDefault(c => c.ChatId == conversationId);
+
+                if (targetChat != null)
+                {
+                    // Đẩy tin nhắn vào model
+                    targetChat.Messages.Add(new MessageModel
+                    {
+                        SenderName = "Friend", // Tạm thời hiển thị chung
+                        Content = message,
+                        Time = DateTime.Now.ToString("hh:mm tt"),
+                        IsMine = false
+                    });
+
+                    // Cập nhật dòng text nhỏ ở cột trái
+                    targetChat.LastMessage = message;
+
+                    // Nếu phòng đó ĐANG ĐƯỢC MỞ trên màn hình, thì cuộn xuống
+                    if (lstChats.SelectedItem is ChatModel currentChat && currentChat.ChatId == conversationId)
+                    {
+                        svMessages.ScrollToEnd();
+                    }
+                }
+            });
         }
 
         private async void LoadRealChatsAsync()
         {
-            // Gọi API lấy danh sách phòng chat của mình
-            var myChats = await ApiClient.GetMyChatsAsync(AuthService.CurrentUserId);
-
+            var myChats = await Backend.Services.ApiClient.GetMyChatsAsync(AuthService.CurrentUserId);
             Chats.Clear();
+
             foreach (var c in myChats)
             {
                 string displayName = c.IsGroup ? c.GroupName : c.OtherUserName;
-
                 Chats.Add(new ChatModel
                 {
                     ChatId = c.ChatId,
@@ -42,31 +87,25 @@ namespace Hermes
                     LastMessage = "Bấm để xem tin nhắn...",
                     LastMessageTime = ""
                 });
+
+                // THÊM ĐÚNG DÒNG NÀY: Ép SignalR chui vào phòng này để chờ tin nhắn
+                await _signalRService.JoinRoomAsync(c.ChatId);
             }
 
-            // Tự động chọn phòng đầu tiên
-            if (Chats.Any())
-            {
-                lstChats.SelectedIndex = 0;
-            }
+            if (Chats.Any()) lstChats.SelectedIndex = 0;
         }
 
         private async void lstChats_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (lstChats.SelectedItem is ChatModel selectedChat)
             {
-                // 1. --- THÊM ĐOẠN NÀY ĐỂ CHUYỂN GIAO DIỆN ---
-                // (Thay tên GridWelcome và GridChat bằng đúng x:Name trong file ChatWindow.xaml của bạn)
                 if (GridWelcome != null) GridWelcome.Visibility = Visibility.Collapsed;
                 if (GridChat != null) GridChat.Visibility = Visibility.Visible;
 
-                // 2. Clear tin nhắn cũ trên UI
                 selectedChat.Messages.Clear();
 
-                // 3. Lấy lịch sử từ Database
                 var history = await Backend.Services.ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId));
 
-                // 4. Đổ dữ liệu vào UI
                 foreach (var msg in history)
                 {
                     msg.IsMine = (msg.SenderId == AuthService.CurrentUserId);
@@ -84,8 +123,6 @@ namespace Hermes
             sw.ShowDialog();
         }
 
-        // Đảm bảo hàm này nằm bên trong: public partial class ChatWindow : Window { ... }
-
         private async void btnAddChat_Click(object sender, RoutedEventArgs e)
         {
             CreateChatWindow createChat = new CreateChatWindow();
@@ -97,7 +134,7 @@ namespace Hermes
                     string newChatName = createChat.ChatName;
                     var userIds = createChat.UserIds.ToList();
 
-                    int newConvId = await Hermes.Backend.Services.ApiClient.CreateConversationAsync(createChat.IsGroup, createChat.IsGroup ? newChatName : null, userIds);
+                    int newConvId = await Backend.Services.ApiClient.CreateConversationAsync(createChat.IsGroup, createChat.IsGroup ? newChatName : null, userIds);
 
                     if (newConvId == -1)
                     {
@@ -125,6 +162,7 @@ namespace Hermes
             }
         }
 
+        // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ PHÁT SIGNALR CHUẨN XÁC ---
         private async void btnSendMessage_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrWhiteSpace(txtMessageInput.Text)) return;
@@ -134,44 +172,34 @@ namespace Hermes
                 string plainText = txtMessageInput.Text.Trim();
                 string currentTime = DateTime.Now.ToString("hh:mm tt");
 
-                // 1. Cập nhật giao diện mượt mà (Giữ nguyên logic cũ)
+                // 1. Cập nhật giao diện mượt mà
                 currentChat.Messages.Add(new MessageModel { SenderName = "You", Content = plainText, Time = currentTime, IsMine = true });
                 currentChat.LastMessage = "You: " + plainText;
                 currentChat.LastMessageTime = currentTime;
                 txtMessageInput.Text = "";
                 svMessages.ScrollToEnd();
 
-                // --- 2. LOGIC BACKEND: LƯU DATABASE ---
+                // 2. LƯU DATABASE
                 try
                 {
-                    // Parse ConversationId từ ChatId của UI
-                    if (!int.TryParse(currentChat.ChatId, out int convId))
-                    {
-                        MessageBox.Show("Lỗi: ID cuộc trò chuyện không hợp lệ.");
-                        return;
-                    }
+                    if (!int.TryParse(currentChat.ChatId, out int convId)) return;
 
-                    // Tạo DTO để gửi lên Server
                     var dto = new Hermes.Shared.DTOs.SendMessageDto
                     {
                         ConversationId = convId,
                         SenderId = AuthService.CurrentUserId,
-
                         CipherText = plainText,
                         TimeToLive = 0,
-
-                        // TODO: Tạm thời để trống. Sau này sẽ mã hóa Session Key bằng RSA Public Key của đối phương
                         RecipientSessionKeys = new Dictionary<string, string>()
                     };
 
-                    // Gọi API lưu tin nhắn xuống MySQL
                     bool isSaved = await Backend.Services.ApiClient.SaveMessageAsync(dto);
 
                     if (isSaved)
                     {
-                        // --- 3. BẮN SIGNALR ĐỂ REAL-TIME ---
-                        // Sẽ gọi _signalRService.SendMessageAsync(...) ở đây
-                        Console.WriteLine("Đã lưu DB thành công. Chuẩn bị bắn SignalR...");
+                        // 3. BẮN SIGNALR VÀO NHÓM (Dùng ChatId làm định danh)
+                        // Bắn tin nhắn mang kèm ConversationId để máy kia biết nhét vào phòng nào
+                        await _signalRService.SendMessageAsync(currentChat.ChatId, plainText);
                     }
                 }
                 catch (Exception ex)
@@ -180,6 +208,5 @@ namespace Hermes
                 }
             }
         }
-
     }
 }

@@ -88,6 +88,19 @@ namespace Hermes.Backend.Services
             catch (Exception ex) { /* Log lá»—i */ }
             return new List<MessageModel>();
         }
+        public static async Task<List<ChatListResponse>> GetMyChatsAsync(string userId)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync($"Conversation/my-chats/{userId}");
+                if (response.IsSuccessStatusCode)
+                {
+                    return await response.Content.ReadFromJsonAsync<List<ChatListResponse>>() ?? new List<ChatListResponse>();
+                }
+            }
+            catch { /* Xá»­ lÃ½ lá»—i máº¡ng */ }
+            return new List<ChatListResponse>();
+        }
     }
 }
 
@@ -763,101 +776,110 @@ namespace Hermes.Converters
         </Border>
 
         <Grid Grid.Column="1" Background="#F9FAFB">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="70"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="85"/>
-            </Grid.RowDefinitions>
 
-            <Border Grid.Row="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="25,0">
-                <Grid>
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Grid Margin="0,0,15,0">
-                            <Ellipse Width="45" Height="45" Fill="#9CA3AF"/>
-                            <TextBlock Text="{Binding ElementName=lstChats, Path=SelectedItem.Initials}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
-                        </Grid>
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock x:Name="txtCurrentChatName" Text="Chọn cuộc trò chuyện" FontSize="18" FontWeight="Bold" Foreground="#1F2937"/>
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="8" Height="8" Fill="#10B981" Margin="0,0,5,0"/>
-                                <TextBlock Text="Đang hoạt động" Foreground="#10B981" FontSize="12" FontWeight="SemiBold"/>
+            <Grid x:Name="GridWelcome" Visibility="Visible">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock Text="👋 Chào mừng đến với Hermes" FontSize="26" FontWeight="Bold" Foreground="#374151" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Chọn một cuộc trò chuyện ở cột trái để bắt đầu nhắn tin an toàn" FontSize="16" Foreground="#9CA3AF" HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                    <Button Content="Tạo cuộc trò chuyện mới" Click="btnAddChat_Click" Margin="0,30,0,0" Padding="20,10" Style="{StaticResource SendButton}" Width="200"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid x:Name="GridChat" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="70"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="85"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="25,0">
+                    <Grid>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Grid Margin="0,0,15,0">
+                                <Ellipse Width="45" Height="45" Fill="#9CA3AF"/>
+                                <TextBlock Text="{Binding ElementName=lstChats, Path=SelectedItem.Initials}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
+                            </Grid>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="txtCurrentChatName" Text="{Binding ElementName=lstChats, Path=SelectedItem.ChatName}" FontSize="18" FontWeight="Bold" Foreground="#1F2937"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="8" Height="8" Fill="#10B981" Margin="0,0,5,0"/>
+                                    <TextBlock Text="Đang hoạt động" Foreground="#10B981" FontSize="12" FontWeight="SemiBold"/>
+                                </StackPanel>
                             </StackPanel>
                         </StackPanel>
-                    </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <Button Content="🔒 Mã hóa E2EE" Background="Transparent" BorderThickness="0" Foreground="#10B981" Margin="0,0,20,0" FontSize="13" FontStyle="Italic"/>
-                        <Button Content="📞" Background="Transparent" BorderThickness="0" FontSize="20" Margin="0,0,15,0" Cursor="Hand"/>
-                        <Button Content="📹" Background="Transparent" BorderThickness="0" FontSize="20" Margin="0,0,15,0" Cursor="Hand"/>
-                        <Button Content="⋮" Background="Transparent" BorderThickness="0" FontSize="24" Cursor="Hand"/>
-                    </StackPanel>
-                </Grid>
-            </Border>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Content="🔒 Mã hóa E2EE" Background="Transparent" BorderThickness="0" Foreground="#10B981" Margin="0,0,20,0" FontSize="13" FontStyle="Italic"/>
+                            <Button Content="📞" Background="Transparent" BorderThickness="0" FontSize="20" Margin="0,0,15,0" Cursor="Hand"/>
+                            <Button Content="📹" Background="Transparent" BorderThickness="0" FontSize="20" Margin="0,0,15,0" Cursor="Hand"/>
+                            <Button Content="⋮" Background="Transparent" BorderThickness="0" FontSize="24" Cursor="Hand"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
-            <ScrollViewer x:Name="svMessages" Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="25" VerticalAlignment="Top">
-                    <Border Background="White" BorderThickness="1" BorderBrush="#E5E7EB" CornerRadius="12" Padding="10,5" HorizontalAlignment="Center" Margin="0,0,0,25">
-                        <TextBlock Text="Hôm nay" FontSize="12" Foreground="#6B7280" FontWeight="SemiBold"/>
-                    </Border>
+                <ScrollViewer x:Name="svMessages" Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="25" VerticalAlignment="Top">
+                        <Border Background="White" BorderThickness="1" BorderBrush="#E5E7EB" CornerRadius="12" Padding="10,5" HorizontalAlignment="Center" Margin="0,0,0,25">
+                            <TextBlock Text="Lịch sử trò chuyện" FontSize="12" Foreground="#6B7280" FontWeight="SemiBold"/>
+                        </Border>
 
-                    <ItemsControl x:Name="icMessages">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid>
-                                    <!-- Hiển thị tin nhắn của người khác (IsMine = False) -->
-                                    <Grid Margin="0,0,0,20" HorizontalAlignment="Left" Visibility="{Binding IsMine, Converter={StaticResource BooleanToVisibilityInverseConverter}}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Grid Grid.Column="0" Margin="0,0,10,0" VerticalAlignment="Top">
-                                            <Ellipse Width="32" Height="32" Fill="#9CA3AF"/>
-                                            <TextBlock Text="{Binding SenderName}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="12" MaxWidth="30" TextTrimming="CharacterEllipsis"/>
-                                        </Grid>
-                                        <StackPanel Grid.Column="1">
-                                            <Border Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="20,20,20,0" Padding="15,10" MaxWidth="500">
-                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="#1F2937" FontSize="14" LineHeight="20"/>
-                                            </Border>
-                                            <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="5,4,0,0"/>
-                                        </StackPanel>
-                                    </Grid>
-
-                                    <!-- Hiển thị tin nhắn của mình (IsMine = True) -->
-                                    <Grid Margin="0,0,0,20" HorizontalAlignment="Right" Visibility="{Binding IsMine, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <StackPanel HorizontalAlignment="Right">
-                                            <Border Background="#3B82F6" CornerRadius="20,20,0,20" Padding="15,10" MaxWidth="500">
-                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White" FontSize="14" LineHeight="20"/>
-                                            </Border>
-                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,5,0">
-                                                <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="0,0,5,0"/>
-                                                <TextBlock Text="✓✓" FontSize="10" Foreground="#3B82F6" FontWeight="Bold"/>
+                        <ItemsControl x:Name="icMessages" ItemsSource="{Binding ElementName=lstChats, Path=SelectedItem.Messages}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid Margin="0,0,0,20" HorizontalAlignment="Left" Visibility="{Binding IsMine, Converter={StaticResource BooleanToVisibilityInverseConverter}}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid Grid.Column="0" Margin="0,0,10,0" VerticalAlignment="Top">
+                                                <Ellipse Width="32" Height="32" Fill="#9CA3AF"/>
+                                                <TextBlock Text="{Binding SenderName}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="12" MaxWidth="30" TextTrimming="CharacterEllipsis"/>
+                                            </Grid>
+                                            <StackPanel Grid.Column="1">
+                                                <Border Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="20,20,20,0" Padding="15,10" MaxWidth="500">
+                                                    <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="#1F2937" FontSize="14" LineHeight="20"/>
+                                                </Border>
+                                                <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="5,4,0,0"/>
                                             </StackPanel>
-                                        </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,20" HorizontalAlignment="Right" Visibility="{Binding IsMine, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <StackPanel HorizontalAlignment="Right">
+                                                <Border Background="#3B82F6" CornerRadius="20,20,0,20" Padding="15,10" MaxWidth="500">
+                                                    <TextBlock Text="{Binding Content}" TextWrapping="Wrap" Foreground="White" FontSize="14" LineHeight="20"/>
+                                                </Border>
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,5,0">
+                                                    <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="0,0,5,0"/>
+                                                    <TextBlock Text="✓✓" FontSize="10" Foreground="#3B82F6" FontWeight="Bold"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Grid>
                                     </Grid>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </ScrollViewer>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
 
-            <Border Grid.Row="2" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="20,10">
-                <Grid VerticalAlignment="Center">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                <Border Grid.Row="2" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="20,10">
+                    <Grid VerticalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
 
-                    <Button Grid.Column="0" Content="📎" Background="Transparent" BorderThickness="0" Margin="0,0,10,0" Cursor="Hand" FontSize="20" ToolTip="Gửi tệp"/>
-                    <Button Grid.Column="1" Content="😄" Background="Transparent" BorderThickness="0" Margin="0,0,15,0" Cursor="Hand" FontSize="20" ToolTip="Chèn biểu tượng"/>
+                        <Button Grid.Column="0" Content="📎" Background="Transparent" BorderThickness="0" Margin="0,0,10,0" Cursor="Hand" FontSize="20" ToolTip="Gửi tệp"/>
+                        <Button Grid.Column="1" Content="😄" Background="Transparent" BorderThickness="0" Margin="0,0,15,0" Cursor="Hand" FontSize="20" ToolTip="Chèn biểu tượng"/>
 
-                    <TextBox x:Name="txtMessageInput" Grid.Column="2" Style="{StaticResource ModernTextBox}" Foreground="#1F2937" Height="45"/>
+                        <TextBox x:Name="txtMessageInput" Grid.Column="2" Style="{StaticResource ModernTextBox}" Foreground="#1F2937" Height="45"/>
 
-                    <Button Click="btnSendMessage_Click" Grid.Column="3" Content="GỬI" Style="{StaticResource SendButton}" Margin="15,0,0,0" Padding="30,0" Height="45"/>
-                </Grid>
-            </Border>
+                        <Button Click="btnSendMessage_Click" Grid.Column="3" Content="GỬI" Style="{StaticResource SendButton}" Margin="15,0,0,0" Padding="30,0" Height="45"/>
+                    </Grid>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </Window>
@@ -878,49 +900,93 @@ namespace Hermes
     public partial class ChatWindow : Window
     {
         public ObservableCollection<ChatModel> Chats { get; set; }
+        private SignalRService _signalRService; // Thêm dòng này
 
         public ChatWindow()
         {
             InitializeComponent();
             Chats = new ObservableCollection<ChatModel>();
-
-            // Fake data init
-            LoadMockData();
-
             lstChats.ItemsSource = Chats;
+
+            // 1. Khởi tạo SignalR kết nối đến Server
+            _signalRService = new SignalRService("http://localhost:5042/chathub");
+
+            // 2. Lắng nghe sự kiện có người nhắn tin tới
+            _signalRService.OnReceiveMessage += SignalR_OnReceiveMessage;
+
+            // 3. Tự động Connect khi cửa sổ vừa load xong
+            this.Loaded += async (s, e) => {
+                await _signalRService.ConnectAsync(AuthService.CurrentUserId);
+            };
+
+            LoadRealChatsAsync();
+        }
+        private void SignalR_OnReceiveMessage(string senderId, string message)
+        {
+            // Đẩy tác vụ vẽ UI về luồng chính của WPF
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (lstChats.SelectedItem is ChatModel currentChat)
+                {
+                    // Cập nhật lên màn hình ngay lập tức
+                    currentChat.Messages.Add(new MessageModel
+                    {
+                        SenderName = "Friend", // Tạm để chữ Friend, sau này map với DB
+                        Content = message,
+                        Time = DateTime.Now.ToString("hh:mm tt"),
+                        IsMine = false
+                    });
+
+                    currentChat.LastMessage = message;
+                    svMessages.ScrollToEnd();
+                }
+            });
+        }
+        private async void LoadRealChatsAsync()
+        {
+            // Gọi API lấy danh sách phòng chat của mình
+            var myChats = await ApiClient.GetMyChatsAsync(AuthService.CurrentUserId);
+
+            Chats.Clear();
+            foreach (var c in myChats)
+            {
+                string displayName = c.IsGroup ? c.GroupName : c.OtherUserName;
+
+                Chats.Add(new ChatModel
+                {
+                    ChatId = c.ChatId,
+                    ChatName = displayName,
+                    Initials = c.IsGroup ? "G" : (string.IsNullOrEmpty(displayName) ? "" : displayName.Substring(0, 1).ToUpper()),
+                    AvatarColor = c.IsGroup ? "#10B981" : "#F59E0B",
+                    LastMessage = "Bấm để xem tin nhắn...",
+                    LastMessageTime = ""
+                });
+            }
+
+            // Tự động chọn phòng đầu tiên
             if (Chats.Any())
             {
                 lstChats.SelectedIndex = 0;
             }
         }
 
-        private void LoadMockData()
-        {
-            var chat1 = new ChatModel { ChatId = "1", ChatName = "Hoàng Hải", Initials = "H", AvatarColor = "#9CA3AF", LastMessage = "You: Nghe hợp lý đấy! Mấy giờ đi...", LastMessageTime = "10:35 AM" };
-            chat1.Messages.Add(new MessageModel { SenderName = "Hoàng Hải", Content = "Cuối tuần này cậu có rảnh không? Bọn mình đi cà phê rồi xem phim luôn nhé?", Time = "10:31 AM", IsMine = false });
-            chat1.Messages.Add(new MessageModel { SenderName = "You", Content = "Nghe hợp lý đấy! Mấy giờ đi được để mình đặt vé trước?", Time = "10:35 AM", IsMine = true });
-
-            var chat2 = new ChatModel { ChatId = "2", ChatName = "Team Phượt Xuyên Việt", Initials = "T", AvatarColor = "#10B981", LastMessage = "Tuấn: Cuối tuần nhớ mang theo áo...", LastMessageTime = "09:15 AM" };
-            chat2.Messages.Add(new MessageModel { SenderName = "Tuấn", Content = "Cuối tuần nhớ mang theo áo khoác nhé mọi người!", Time = "09:10 AM", IsMine = false });
-
-            Chats.Add(chat1);
-            Chats.Add(chat2);
-        }
-
         private async void lstChats_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (lstChats.SelectedItem is ChatModel selectedChat)
             {
-                // 1. Xóa các tin nhắn cũ đang hiển thị trên UI (nếu có)
+                // (Thay tên GridWelcome và GridChat bằng đúng x:Name trong file ChatWindow.xaml của bạn)
+                if (GridWelcome != null) GridWelcome.Visibility = Visibility.Collapsed;
+                if (GridChat != null) GridChat.Visibility = Visibility.Visible;
+
+                // 2. Clear tin nhắn cũ trên UI
                 selectedChat.Messages.Clear();
 
-                // 2. Gọi API lấy lịch sử từ Server
-                var history = await ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId));
+                // 3. Lấy lịch sử từ Database
+                var history = await Backend.Services.ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId));
 
-                // 3. Đổ dữ liệu vào UI
+                // 4. Đổ dữ liệu vào UI
                 foreach (var msg in history)
                 {
-                    // Kiểm tra xem tin nhắn đó là của mình hay của đối phương
                     msg.IsMine = (msg.SenderId == AuthService.CurrentUserId);
                     selectedChat.Messages.Add(msg);
                 }
@@ -935,8 +1001,6 @@ namespace Hermes
             sw.Owner = this;
             sw.ShowDialog();
         }
-
-        // Đảm bảo hàm này nằm bên trong: public partial class ChatWindow : Window { ... }
 
         private async void btnAddChat_Click(object sender, RoutedEventArgs e)
         {
@@ -1017,13 +1081,15 @@ namespace Hermes
                     };
 
                     // Gọi API lưu tin nhắn xuống MySQL
+                    // Gọi API lưu tin nhắn xuống MySQL
                     bool isSaved = await Backend.Services.ApiClient.SaveMessageAsync(dto);
 
                     if (isSaved)
                     {
                         // --- 3. BẮN SIGNALR ĐỂ REAL-TIME ---
-                        // Sẽ gọi _signalRService.SendMessageAsync(...) ở đây
-                        Console.WriteLine("Đã lưu DB thành công. Chuẩn bị bắn SignalR...");
+                        // (Lưu ý: Để nhắn trúng người, bạn cần thay "ID_NGUOI_NHAN" bằng UserID thực tế của đối phương. 
+                        // Tạm thời để test, bạn có thể hardcode UserID của tài khoản thứ 2 vào đây).
+                        await _signalRService.SendMessageAsync("ID_NGUOI_NHAN", plainText);
                     }
                 }
                 catch (Exception ex)
@@ -1876,6 +1942,30 @@ namespace Hermes.Server.Controllers
                 return StatusCode(500, ex.Message);
             }
         }
+        // GET: api/Conversation/my-chats/{userId}
+        [HttpGet("my-chats/{userId}")]
+        public async Task<IActionResult> GetMyChats(string userId)
+        {
+            using var connection = new MySqlConnection(ConnectionString);
+
+            // Câu truy vấn tìm các nhóm/người đã chat, và lấy tên người bên kia (nếu là chat cá nhân)
+            string query = @"
+        SELECT 
+            c.Id as ChatId, 
+            c.IsGroup, 
+            c.GroupName,
+            (SELECT i.FullName 
+             FROM PARTICIPANTS p2 
+             JOIN USERINFO i ON p2.UserId = i.UserId 
+             WHERE p2.ConversationId = c.Id AND p2.UserId != @UserId LIMIT 1) as OtherUserName
+        FROM CONVERSATIONS c
+        JOIN PARTICIPANTS p ON c.Id = p.ConversationId
+        WHERE p.UserId = @UserId
+        ORDER BY c.CreatedAt DESC";
+
+            var chats = await connection.QueryAsync<ChatListResponse>(query, new { UserId = userId });
+            return Ok(chats);
+        }
     }
 }
 
@@ -2134,6 +2224,19 @@ app.MapControllers();
 app.MapHub<ChatHub>("/chathub");
 
 app.Run();
+
+--- FILE: ChatListResponse.cs ---
+
+namespace Hermes.Shared.DTOs
+{
+    public class ChatListResponse
+    {
+        public string ChatId { get; set; }
+        public bool IsGroup { get; set; }
+        public string GroupName { get; set; }
+        public string OtherUserName { get; set; } // Dùng cho chat 1-1
+    }
+}
 
 --- FILE: CreateConversationRequest.cs ---
 
