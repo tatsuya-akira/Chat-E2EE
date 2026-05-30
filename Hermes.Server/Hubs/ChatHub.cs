@@ -43,7 +43,7 @@ namespace Hermes.Server.Hubs
             var connectionId = Context.ConnectionId;
 
             // Nếu user rớt mạng hoặc tắt app, tìm xem đó là ai
-            if (_connectionUserMap.TryRemove(connectionId, out string userId))
+            if (_connectionUserMap.TryRemove(connectionId, out string? userId))
             {
                 if (_userConnections.TryGetValue(userId, out var connections))
                 {

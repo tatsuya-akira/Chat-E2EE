@@ -24,6 +24,8 @@ namespace Hermes
             var res = MessageBox.Show("Bạn có chắc chắn muốn đăng xuất?", "Xác nhận", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (res == MessageBoxResult.Yes)
             {
+                Backend.Services.CryptoService.ClearPrivateKeyLocal();
+
                 AuthService.Logout();
                 MainWindow login = new MainWindow();
                 login.Show();
@@ -41,7 +43,6 @@ namespace Hermes
         }
         private void btnSettings_Click(object sender, RoutedEventArgs e)
         {
-            // Đoạn code bạn đã viết
             string myPrivateKey = AuthService.CurrentPrivateKey;
             MessageBox.Show($"ĐÂY LÀ KHÓA BÍ MẬT RSA CỦA BẠN:\n\n{myPrivateKey}", "Khóa cá nhân", MessageBoxButton.OK, MessageBoxImage.Information);
         }

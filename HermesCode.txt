@@ -14,7 +14,7 @@ namespace Hermes.Backend.Services
     public class ApiClient
     {
         private static readonly HttpClient _httpClient;
-        
+
         static ApiClient()
         {
             _httpClient = new HttpClient();
@@ -131,6 +131,12 @@ namespace Hermes.Backend.Services
             catch { /* Lá»—i máº¡ng */ }
             return "Unknown";
         }
+        public static async Task<bool> UpdateUserKeysAsync(UpdateKeyRequest request)
+        {
+            var response = await _httpClient.PutAsJsonAsync("Auth/update-keys", request);
+            return response.IsSuccessStatusCode;
+        }
+    }
 }
 
 --- FILE: AuthService.cs ---
@@ -153,7 +159,7 @@ namespace Hermes
         public static string CurrentToken { get; private set; }
         public static string CurrentPrivateKey { get; set; }
         public static string CurrentPublicKey { get; private set; }
-
+        public static string CurrentFullName { get; set; }
 
         static AuthService()
         {
@@ -176,7 +182,8 @@ namespace Hermes
                     CurrentUserId = auth.User.LocalId;
                     CurrentToken = auth.FirebaseToken;
                     await LoadUserKeysAsync(CurrentUserId, password);
-
+                    var userInfo = await ApiClient.GetUserByIdentifierAsync(email);
+                    CurrentFullName = userInfo?.FullName ?? "NgÆ°á»i dÃ¹ng áº©n danh";
                     return true;
                 }
                 return false;
@@ -276,10 +283,21 @@ namespace Hermes
             CurrentPublicKey = null;
         }
 
-        public static string GetUsernameByIdentifier(string identifier)
-        {
-            
-        }
+        //public static async Task<string> GetUsernameByIdentifierAsync(string identifier)
+        //{
+        //    try
+        //    {
+        //        // Gá»i API lÃªn Server Ä‘á»ƒ tÃ¬m user
+        //        var userInfo = await Backend.Services.ApiClient.GetUserByIdentifierAsync(identifier);
+
+        //        // Náº¿u tÃ¬m tháº¥y thÃ¬ tráº£ vá» tÃªn, khÃ´ng thÃ¬ tráº£ vá» "áº¨n danh"
+        //        return userInfo?.FullName ?? "NgÆ°á»i dÃ¹ng áº©n danh";
+        //    }
+        //    catch
+        //    {
+        //        return "Lá»—i káº¿t ná»‘i";
+        //    }
+        //}
 
         private static async Task LoadUserKeysAsync(string userId, string password)
         {
@@ -289,7 +307,48 @@ namespace Hermes
                 CurrentPublicKey = keys.PublicKey;
                 var masterKey = CryptoService.DeriveMasterKey(password, keys.Salt);
                 CurrentPrivateKey = CryptoService.DecryptPrivateKey(keys.WrappedPrivateKey, masterKey);
+
+                // --- Báº®T Lá»–I SAI CHÃŒA KHÃ“A E2EE ---
+                if (CurrentPrivateKey != null && CurrentPrivateKey.StartsWith("[Lá»—i:"))
+                {
+                    CurrentPrivateKey = null;
+                    throw new Exception("E2EE_KEY_CORRUPTED");
+                }
+
                 CryptoService.SavePrivateKeyLocal(CurrentPrivateKey);
+            }
+        }
+        public static async Task<bool> ResetAccountKeysAsync(string newPassword)
+        {
+            try
+            {
+                var newSalt = CryptoService.GenerateSalt();
+                var newMasterKey = CryptoService.DeriveMasterKey(newPassword, newSalt);
+                var newKeys = CryptoService.GenerateRSAKeys();
+                var newWrappedPriv = CryptoService.EncryptPrivateKey(newKeys.PrivateKeyBase64, newMasterKey);
+
+                var request = new Hermes.Shared.DTOs.UpdateKeyRequest
+                {
+                    UserId = CurrentUserId,
+                    PublicKey = newKeys.PublicKeyBase64,
+                    WrappedPrivateKey = newWrappedPriv,
+                    Salt = newSalt
+                };
+
+                bool isUpdated = await ApiClient.UpdateUserKeysAsync(request);
+
+                if (isUpdated)
+                {
+                    CurrentPublicKey = newKeys.PublicKeyBase64;
+                    CurrentPrivateKey = newKeys.PrivateKeyBase64;
+                    CryptoService.SavePrivateKeyLocal(CurrentPrivateKey);
+                    return true;
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Lá»—i khi khÃ´i phá»¥c khÃ³a: " + ex.Message);
             }
         }
     }
@@ -1087,14 +1146,13 @@ namespace Hermes
             // Đăng ký nhận thông báo có phòng chat mới
             _signalRService.OnNewChatNotification += () =>
             {
-                Dispatcher.Invoke(async () =>
+                Dispatcher.Invoke(() =>
                 {
-                    // GỌI LẠI HÀM TẢI DANH SÁCH CHAT CỦA BẠN TẠI ĐÂY
-                    await LoadRealChatsAsync();
-                    // (Thay tên hàm bằng hàm thực tế bạn dùng để đổ dữ liệu vào lstChats)
+                    // GỌI LẠI HÀM TẢI DANH SÁCH CHAT
+                    // Bỏ chữ 'await' đi vì hàm này là void
+                    LoadRealChatsAsync();
                 });
             };
-            await _signalRService.SendNewChatNotificationAsync(participantIds);
         }
 
         // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
@@ -1234,9 +1292,9 @@ namespace Hermes
                         LastMessage = "Bắt đầu cuộc trò chuyện...",
                         LastMessageTime = DateTime.Now.ToString("hh:mm tt")
                     };
-
                     Chats.Insert(0, newChat);
                     lstChats.SelectedItem = newChat;
+                    await _signalRService.SendNewChatNotificationAsync(userIds);
                 }
                 catch (Exception ex)
                 {
@@ -1451,8 +1509,9 @@ namespace Hermes
                     IsGroup = true;
                     ChatName = groupName;
 
-                    string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
+                    string currentFullName = AuthService.CurrentFullName;
+
+                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName); if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
                     userIdsList.Add(AuthService.CurrentUserId);
 
                     Participants = participantsList.ToArray();
@@ -1471,8 +1530,9 @@ namespace Hermes
                     ChatName = user.FullName;
 
                     var participantsList = new System.Collections.Generic.List<string> { user.FullName };
-                    string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
+                    string currentFullName = AuthService.CurrentFullName;
+
+                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName); if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
 
                     Participants = participantsList.ToArray();
                     UserIds = new[] { user.UserId, AuthService.CurrentUserId };
@@ -1686,10 +1746,11 @@ namespace Hermes
 
         private async void btnLogin_Click(object sender, RoutedEventArgs e)
         {
+            string email = txtEmail.Text.Trim();
+            string password = txtPassword.Password;
+
             try
             {
-                string email = txtEmail.Text.Trim();
-                string password = txtPassword.Password;
 
                 // 1. Kiểm tra rỗng
                 if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
@@ -1724,8 +1785,43 @@ namespace Hermes
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Lỗi đăng nhập: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
-                btnLogin.IsEnabled = true;
+                // BẮT MÃ LỖI ĐẶC BIỆT KHI SAI CHÌA KHÓA E2EE
+                if (ex.Message.Contains("E2EE_KEY_CORRUPTED"))
+                {
+                    var res = MessageBox.Show(
+                        "Bạn đang đăng nhập bằng mật khẩu mới nhưng hệ thống mã hóa E2EE từ chối giải mã.\n\n" +
+                        "Bạn có muốn ĐẶT LẠI TÀI KHOẢN? (Hệ thống sẽ tạo khóa bảo mật mới cho bạn, nhưng TOÀN BỘ lịch sử chat cũ sẽ không thể đọc được nữa).",
+                        "Cảnh báo bảo mật E2EE",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning);
+
+                    if (res == MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            await AuthService.ResetAccountKeysAsync(password);
+                            MessageBox.Show("Khôi phục tài khoản thành công! Khóa bảo mật mới đã được tạo.", "Thành công", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                            ChatWindow chat = new ChatWindow();
+                            chat.Show();
+                            this.Close();
+                        }
+                        catch (Exception resetEx)
+                        {
+                            MessageBox.Show(resetEx.Message, "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                            btnLogin.IsEnabled = true;
+                        }
+                    }
+                    else
+                    {
+                        btnLogin.IsEnabled = true;
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(ex.Message, "Lỗi đăng nhập", MessageBoxButton.OK, MessageBoxImage.Error);
+                    btnLogin.IsEnabled = true;
+                }
             }
         }
 
@@ -1966,7 +2062,7 @@ namespace Hermes
         {
             txtUserId.Text = "UID: " + (AuthService.CurrentUserId ?? "N/A");
             txtUserEmail.Text = "Email: " + (Environment.GetEnvironmentVariable("USER_EMAIL") ?? "TÃ i khoáº£n hiá»‡n táº¡i");
-            txtUserName.Text = "TÃªn ngÆ°á»i dÃ¹ng: " + (AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId) ?? "N/A");  
+            txtUserName.Text = "TÃªn ngÆ°á»i dÃ¹ng: " + (AuthService.CurrentFullName ?? "N/A");
         }
 
         private void btnLogout_Click(object sender, RoutedEventArgs e)
@@ -2125,6 +2221,20 @@ namespace Hermes.Server.Controllers
             
             if (keys == null) return NotFound();
             return Ok(keys);
+        }
+        [HttpPut("update-keys")]
+        public async Task<IActionResult> UpdateKeys([FromBody] Hermes.Shared.DTOs.UpdateKeyRequest request)
+        {
+            using var connection = new MySqlConnection(ConnectionString);
+            string query = @"
+                UPDATE USERS 
+                SET PublicKey = @PublicKey, WrappedPrivateKey = @WrappedPrivateKey, Salt = @Salt 
+                WHERE Id = @UserId";
+
+            int rowsAffected = await connection.ExecuteAsync(query, request);
+
+            if (rowsAffected > 0) return Ok();
+            return BadRequest("KhÃ´ng tÃ¬m tháº¥y tÃ i khoáº£n Ä‘á»ƒ cáº­p nháº­t khÃ³a.");
         }
     }
 }
@@ -2448,11 +2558,11 @@ namespace Hermes.Server.Hubs
         {
             foreach (var userId in participantIds)
             {
-                // Kiá»ƒm tra xem ngÆ°á»i Ä‘Ã³ cÃ³ Ä‘ang online khÃ´ng
-                if (_userConnections.TryGetValue(userId, out var connectionId))
+                // connections á»Ÿ Ä‘Ã¢y lÃ  má»™t HashSet<string> chá»©a táº¥t cáº£ cÃ¡c mÃ¡y Ä‘ang má»Ÿ cá»§a userId nÃ y
+                if (_userConnections.TryGetValue(userId, out var connections))
                 {
-                    // Gá»­i tÃ­n hiá»‡u "CÃ³ phÃ²ng má»›i kÃ¬a, load láº¡i Ä‘i!"
-                    await Clients.Client(connectionId).SendAsync("ReceiveNewChatNotification");
+                    // Pháº£i chuyá»ƒn nÃ³ thÃ nh dáº¡ng List thÃ¬ hÃ m Clients() má»›i hiá»ƒu
+                    await Clients.Clients(connections.ToList()).SendAsync("ReceiveNewChatNotification");
                 }
             }
         }
@@ -2622,6 +2732,23 @@ namespace Hermes.Shared.DTOs
 
         // Dictionary lưu trữ: [Id_Người_Nhận] -> [Session_Key_Đã_Mã_Hóa_RSA]
         public Dictionary<string, string> RecipientSessionKeys { get; set; }
+    }
+}
+
+--- FILE: UpdateKeyRequest.cs ---
+
+using System;
+using System.Collections.Generic;
+using System.Text;
+
+namespace Hermes.Shared.DTOs
+{
+    public class UpdateKeyRequest
+    {
+        public string UserId { get; set; }
+        public string PublicKey { get; set; }
+        public string WrappedPrivateKey { get; set; }
+        public string Salt { get; set; }
     }
 }
 

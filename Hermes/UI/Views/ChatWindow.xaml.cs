@@ -105,8 +105,6 @@ namespace Hermes
                     LastMessage = "Bấm để xem tin nhắn...",
                     LastMessageTime = ""
                 });
-
-                // THÊM ĐÚNG DÒNG NÀY: Ép SignalR chui vào phòng này để chờ tin nhắn
                 await _signalRService.JoinRoomAsync(c.ChatId);
             }
 
