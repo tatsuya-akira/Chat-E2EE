@@ -36,30 +36,48 @@ namespace Hermes
                 LoadRealChatsAsync();
             };
 
-            // (ĐÃ XÓA LoadRealChatsAsync() Ở ĐÂY)
+            // Đăng ký nhận thông báo có phòng chat mới
+            _signalRService.OnNewChatNotification += () =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    // GỌI LẠI HÀM TẢI DANH SÁCH CHAT
+                    // Bỏ chữ 'await' đi vì hàm này là void
+                    LoadRealChatsAsync();
+                });
+            };
         }
 
         // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
-        private void SignalR_OnReceiveMessage(string conversationId, string message)
+        private void SignalR_OnReceiveMessage(string conversationId, string cipherText, Dictionary<string, string> recipientKeys)
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                // Tìm đúng phòng chat đang nhận tin nhắn (Dựa vào ID thay vì SelectedItem)
                 var targetChat = Chats.FirstOrDefault(c => c.ChatId == conversationId);
-
                 if (targetChat != null)
                 {
-                    // Đẩy tin nhắn vào model
+                    string plainText = "[Tin nhắn mã hóa]";
+
+                    // --- BẮT ĐẦU GIẢI MÃ ---
+                    // Tìm chìa khóa AES của riêng mình trong cái rổ chìa khóa Server gửi về
+                    if (recipientKeys.TryGetValue(AuthService.CurrentUserId, out string myEncryptedSessionKey))
+                    {
+                        try
+                        {
+                            byte[] aesKey = Backend.Services.CryptoService.DecryptSessionKeyWithRSA(myEncryptedSessionKey, AuthService.CurrentPrivateKey);
+                            plainText = Backend.Services.CryptoService.DecryptWithAES(cipherText, aesKey);
+                        }
+                        catch { plainText = "[Lỗi giải mã E2EE]"; }
+                    }
+                    // -----------------------
+
                     targetChat.Messages.Add(new MessageModel
                     {
-                        SenderName = "Friend", // Tạm thời hiển thị chung
-                        Content = message,
+                        SenderName = "Friend",
+                        Content = plainText, // Gán text đã giải mã thành công vào UI
                         Time = DateTime.Now.ToString("hh:mm tt"),
                         IsMine = false
                     });
-
-                    // Cập nhật dòng text nhỏ ở cột trái
-                    targetChat.LastMessage = message;
 
                     // Nếu phòng đó ĐANG ĐƯỢC MỞ trên màn hình, thì cuộn xuống
                     if (lstChats.SelectedItem is ChatModel currentChat && currentChat.ChatId == conversationId)
@@ -104,15 +122,31 @@ namespace Hermes
 
                 selectedChat.Messages.Clear();
 
-                var history = await Backend.Services.ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId));
+                // Thay dòng gọi API cũ bằng dòng này
+                var history = await Backend.Services.ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId), AuthService.CurrentUserId);
 
                 foreach (var msg in history)
                 {
                     msg.IsMine = (msg.SenderId == AuthService.CurrentUserId);
+
+                    // --- BẮT ĐẦU GIẢI MÃ ---
+                    // Đã xóa "!msg.IsMine &&", giờ tin nào có khóa là giải mã láng hết!
+                    if (!string.IsNullOrEmpty(msg.EncryptedSessionKey))
+                    {
+                        try
+                        {
+                            // 1. Mở khóa AES bằng Private Key của mình
+                            byte[] aesKey = Backend.Services.CryptoService.DecryptSessionKeyWithRSA(msg.EncryptedSessionKey, AuthService.CurrentPrivateKey);
+
+                            // 2. Dùng khóa AES vừa mở để giải mã nội dung tin nhắn
+                            msg.Content = Backend.Services.CryptoService.DecryptWithAES(msg.Content, aesKey);
+                        }
+                        catch { msg.Content = "[Lỗi giải mã E2EE]"; }
+                    }
+                    // -----------------------
+
                     selectedChat.Messages.Add(msg);
                 }
-
-                svMessages.ScrollToEnd();
             }
         }
 
@@ -151,9 +185,9 @@ namespace Hermes
                         LastMessage = "Bắt đầu cuộc trò chuyện...",
                         LastMessageTime = DateTime.Now.ToString("hh:mm tt")
                     };
-
                     Chats.Insert(0, newChat);
                     lstChats.SelectedItem = newChat;
+                    await _signalRService.SendNewChatNotificationAsync(userIds);
                 }
                 catch (Exception ex)
                 {
@@ -172,39 +206,67 @@ namespace Hermes
                 string plainText = txtMessageInput.Text.Trim();
                 string currentTime = DateTime.Now.ToString("hh:mm tt");
 
-                // 1. Cập nhật giao diện mượt mà
+                // 1. Cập nhật giao diện mượt mà (Vẫn hiển thị chữ thật cho người gửi xem)
                 currentChat.Messages.Add(new MessageModel { SenderName = "You", Content = plainText, Time = currentTime, IsMine = true });
                 currentChat.LastMessage = "You: " + plainText;
                 currentChat.LastMessageTime = currentTime;
                 txtMessageInput.Text = "";
                 svMessages.ScrollToEnd();
 
-                // 2. LƯU DATABASE
+                // 2. LƯU DATABASE BẰNG MÃ HÓA LAI (HYBRID ENCRYPTION)
                 try
                 {
                     if (!int.TryParse(currentChat.ChatId, out int convId)) return;
 
+                    // --- BƯỚC MẬT MÃ HÓA ---
+                    // A. Sinh khóa phiên AES (Session Key) dùng một lần cho tin nhắn này
+                    byte[] sessionKey = Backend.Services.CryptoService.GenerateRandomKey();
+
+                    // B. Mã hóa nội dung tin nhắn bằng khóa AES vừa tạo
+                    string cipherText = Backend.Services.CryptoService.EncryptWithAES(plainText, sessionKey);
+
+                    // C. Lấy Public Key của tất cả thành viên trong phòng chat
+                    var publicKeys = await Backend.Services.ApiClient.GetParticipantPublicKeysAsync(convId);
+                    if (publicKeys.Count == 0)
+                    {
+                        MessageBox.Show("Không thể tải khóa bảo mật của phòng chat!");
+                        return;
+                    }
+
+                    // D. Bọc (Wrap) khóa AES bằng RSA Public Key của TỪNG NGƯỜI
+                    var recipientKeys = new Dictionary<string, string>();
+                    foreach (var pk in publicKeys)
+                    {
+                        string userId = pk.Key;
+                        string publicKeyBase64 = pk.Value;
+
+                        recipientKeys[userId] = Backend.Services.CryptoService.EncryptSessionKeyWithRSA(sessionKey, publicKeyBase64);
+                    }
+
+                    // E. Gói toàn bộ dữ liệu mã hóa thành DTO
                     var dto = new Hermes.Shared.DTOs.SendMessageDto
                     {
                         ConversationId = convId,
                         SenderId = AuthService.CurrentUserId,
-                        CipherText = plainText,
+                        CipherText = cipherText, // Gửi chuỗi mã hóa lên Server, tuyệt đối KHÔNG gửi plainText
                         TimeToLive = 0,
-                        RecipientSessionKeys = new Dictionary<string, string>()
+                        RecipientSessionKeys = recipientKeys // Các chìa khóa AES đã được khóa chặt bằng RSA
                     };
 
+                    // Gọi API lưu tin nhắn an toàn xuống MySQL
                     bool isSaved = await Backend.Services.ApiClient.SaveMessageAsync(dto);
 
                     if (isSaved)
                     {
-                        // 3. BẮN SIGNALR VÀO NHÓM (Dùng ChatId làm định danh)
-                        // Bắn tin nhắn mang kèm ConversationId để máy kia biết nhét vào phòng nào
-                        await _signalRService.SendMessageAsync(currentChat.ChatId, plainText);
+                        // 3. BẮN SIGNALR ĐỂ REAL-TIME
+                        // Phát trực tiếp đoạn mã hóa (cipherText) qua WebSocket cho máy bên kia
+                        // Truyền thêm recipientKeys vào
+                        await _signalRService.SendMessageAsync(currentChat.ChatId, cipherText, recipientKeys);
                     }
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"Lỗi hệ thống khi gửi tin nhắn: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show($"Lỗi hệ thống khi mã hóa E2EE: {ex.Message}", "Lỗi Bảo Mật", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
         }

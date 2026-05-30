@@ -16,6 +16,7 @@ namespace Hermes
         {
             txtUserId.Text = "UID: " + (AuthService.CurrentUserId ?? "N/A");
             txtUserEmail.Text = "Email: " + (Environment.GetEnvironmentVariable("USER_EMAIL") ?? "Tài khoản hiện tại");
+            txtUserName.Text = "Tên người dùng: " + (AuthService.CurrentFullName ?? "N/A");
         }
 
         private void btnLogout_Click(object sender, RoutedEventArgs e)
@@ -37,6 +38,12 @@ namespace Hermes
                     }
                 }
             }
+        }
+        private void btnSettings_Click(object sender, RoutedEventArgs e)
+        {
+            // Đoạn code bạn đã viết
+            string myPrivateKey = AuthService.CurrentPrivateKey;
+            MessageBox.Show($"ĐÂY LÀ KHÓA BÍ MẬT RSA CỦA BẠN:\n\n{myPrivateKey}", "Khóa cá nhân", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 }

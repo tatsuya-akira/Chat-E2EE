@@ -8,9 +8,9 @@ namespace Hermes.Backend.Services
     public class SignalRService
     {
         private HubConnection _connection;
-        public event Action<string, string> OnReceiveMessage;
+        public event Action<string, string, Dictionary<string, string>> OnReceiveMessage;
         public event Action<string, string, int> OnIncomingCall;
-
+        public event Action OnNewChatNotification;
         // Thêm Event báo trạng thái Online/Offline
         public event Action<string, bool> OnUserStatusChanged;
 
@@ -21,9 +21,9 @@ namespace Hermes.Backend.Services
                 .WithAutomaticReconnect() // Tự kết nối lại nếu rớt mạng
                 .Build();
 
-            _connection.On<string, string>("ReceiveMessage", (senderId, encryptedMessage) =>
+            _connection.On<string, string, Dictionary<string, string>>("ReceiveMessage", (conversationId, encryptedMessage, recipientKeys) =>
             {
-                OnReceiveMessage?.Invoke(senderId, encryptedMessage);
+                OnReceiveMessage?.Invoke(conversationId, encryptedMessage, recipientKeys);
             });
 
             _connection.On<string, string, int>("IncomingCall", (callerId, ip, port) =>
@@ -35,6 +35,11 @@ namespace Hermes.Backend.Services
             _connection.On<string, bool>("UserStatusChanged", (userId, isOnline) =>
             {
                 OnUserStatusChanged?.Invoke(userId, isOnline);
+            });
+            // 2. Thêm cái này vào trong Constructor để lắng nghe Server
+            _connection.On("ReceiveNewChatNotification", () =>
+            {
+                OnNewChatNotification?.Invoke();
             });
         }
 
@@ -59,11 +64,11 @@ namespace Hermes.Backend.Services
             }
         }
 
-        public async Task SendMessageAsync(string receiverId, string encryptedMessage)
+        public async Task SendMessageAsync(string conversationId, string message, Dictionary<string, string> recipientKeys)
         {
-            if (_connection.State == HubConnectionState.Connected)
+            if (_connection.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected)
             {
-                await _connection.InvokeAsync("SendMessage", receiverId, encryptedMessage);
+                await _connection.InvokeAsync("SendMessage", conversationId, message, recipientKeys);
             }
         }
 
@@ -87,6 +92,13 @@ namespace Hermes.Backend.Services
             if (_connection.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected)
             {
                 await _connection.InvokeAsync("JoinRoom", conversationId);
+            }
+        }
+        public async Task SendNewChatNotificationAsync(List<string> participantIds)
+        {
+            if (_connection.State == HubConnectionState.Connected)
+            {
+                await _connection.InvokeAsync("NotifyNewChat", participantIds);
             }
         }
     }

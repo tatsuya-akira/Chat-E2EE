@@ -14,8 +14,9 @@ namespace Hermes
         private static FirebaseAuthProvider _authProvider;
         public static string CurrentUserId { get; private set; }
         public static string CurrentToken { get; private set; }
-        public static string CurrentPrivateKey { get; private set; }
+        public static string CurrentPrivateKey { get; set; }
         public static string CurrentPublicKey { get; private set; }
+        public static string CurrentFullName { get; set; }
 
         static AuthService()
         {
@@ -38,6 +39,8 @@ namespace Hermes
                     CurrentUserId = auth.User.LocalId;
                     CurrentToken = auth.FirebaseToken;
                     await LoadUserKeysAsync(CurrentUserId, password);
+                    var userInfo = await ApiClient.GetUserByIdentifierAsync(email);
+                    CurrentFullName = userInfo?.FullName ?? "Người dùng ẩn danh";
                     return true;
                 }
                 return false;
@@ -137,12 +140,21 @@ namespace Hermes
             CurrentPublicKey = null;
         }
 
-        public static string GetUsernameByIdentifier(string identifier)
-        {
-            // Now managed by API, this method is left for backward compatibility in WPF UI locally if needed,
-            // or replace it directly async
-            return null; // temporary stub
-        }
+        //public static async Task<string> GetUsernameByIdentifierAsync(string identifier)
+        //{
+        //    try
+        //    {
+        //        // Gọi API lên Server để tìm user
+        //        var userInfo = await Backend.Services.ApiClient.GetUserByIdentifierAsync(identifier);
+
+        //        // Nếu tìm thấy thì trả về tên, không thì trả về "Ẩn danh"
+        //        return userInfo?.FullName ?? "Người dùng ẩn danh";
+        //    }
+        //    catch
+        //    {
+        //        return "Lỗi kết nối";
+        //    }
+        //}
 
         private static async Task LoadUserKeysAsync(string userId, string password)
         {
@@ -152,6 +164,48 @@ namespace Hermes
                 CurrentPublicKey = keys.PublicKey;
                 var masterKey = CryptoService.DeriveMasterKey(password, keys.Salt);
                 CurrentPrivateKey = CryptoService.DecryptPrivateKey(keys.WrappedPrivateKey, masterKey);
+
+                // --- BẮT LỖI SAI CHÌA KHÓA E2EE ---
+                if (CurrentPrivateKey != null && CurrentPrivateKey.StartsWith("[Lỗi:"))
+                {
+                    CurrentPrivateKey = null;
+                    throw new Exception("E2EE_KEY_CORRUPTED");
+                }
+
+                CryptoService.SavePrivateKeyLocal(CurrentPrivateKey);
+            }
+        }
+        public static async Task<bool> ResetAccountKeysAsync(string newPassword)
+        {
+            try
+            {
+                var newSalt = CryptoService.GenerateSalt();
+                var newMasterKey = CryptoService.DeriveMasterKey(newPassword, newSalt);
+                var newKeys = CryptoService.GenerateRSAKeys();
+                var newWrappedPriv = CryptoService.EncryptPrivateKey(newKeys.PrivateKeyBase64, newMasterKey);
+
+                var request = new Hermes.Shared.DTOs.UpdateKeyRequest
+                {
+                    UserId = CurrentUserId,
+                    PublicKey = newKeys.PublicKeyBase64,
+                    WrappedPrivateKey = newWrappedPriv,
+                    Salt = newSalt
+                };
+
+                bool isUpdated = await ApiClient.UpdateUserKeysAsync(request);
+
+                if (isUpdated)
+                {
+                    CurrentPublicKey = newKeys.PublicKeyBase64;
+                    CurrentPrivateKey = newKeys.PrivateKeyBase64;
+                    CryptoService.SavePrivateKeyLocal(CurrentPrivateKey);
+                    return true;
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Lỗi khi khôi phục khóa: " + ex.Message);
             }
         }
     }

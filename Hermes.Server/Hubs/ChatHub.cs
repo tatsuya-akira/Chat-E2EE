@@ -16,6 +16,7 @@ namespace Hermes.Server.Hubs
 
         public async Task RegisterUser(string userId)
         {
+            if (string.IsNullOrEmpty(userId)) return;
             var connectionId = Context.ConnectionId;
 
             // 1. Thêm vào Map User -> Connections
@@ -75,15 +76,29 @@ namespace Hermes.Server.Hubs
         }
 
         // --- CÁC HÀM CŨ GIỮ NGUYÊN ---
-        public async Task SendMessage(string conversationId, string encryptedMessage)
+        // Đổi tham số hàm SendMessage
+        public async Task SendMessage(string conversationId, string encryptedMessage, Dictionary<string, string> recipientKeys)
         {
-            // FIX TẠI ĐÂY: Đổi chữ 'Group' thành 'OthersInGroup'
-            await Clients.OthersInGroup(conversationId).SendAsync("ReceiveMessage", conversationId, encryptedMessage);
+            // Bắn cả dictionary khóa qua mạng
+            await Clients.OthersInGroup(conversationId).SendAsync("ReceiveMessage", conversationId, encryptedMessage, recipientKeys);
         }
 
         public async Task InitiateCall(string receiverId, string myIp, int myPort)
         {
             await Clients.Group(receiverId).SendAsync("IncomingCall", Context.ConnectionId, myIp, myPort);
+        }
+        // Hàm này nhận danh sách những người trong phòng mới và gọi họ dậy
+        public async Task NotifyNewChat(List<string> participantIds)
+        {
+            foreach (var userId in participantIds)
+            {
+                // connections ở đây là một HashSet<string> chứa tất cả các máy đang mở của userId này
+                if (_userConnections.TryGetValue(userId, out var connections))
+                {
+                    // Phải chuyển nó thành dạng List thì hàm Clients() mới hiểu
+                    await Clients.Clients(connections.ToList()).SendAsync("ReceiveNewChatNotification");
+                }
+            }
         }
     }
 }

@@ -73,19 +73,22 @@ namespace Hermes.Backend.Services
             }
             return true; // LÆ°u Database thÃ nh cÃ´ng!
         }
-        public static async Task<List<MessageModel>> GetChatHistoryAsync(int conversationId)
+        public static async Task<List<MessageModel>> GetChatHistoryAsync(int conversationId, string userId)
         {
-            try
+            // ThÃªm userId vÃ o URL
+            var response = await _httpClient.GetAsync($"Message/history/{conversationId}/{userId}");
+
+            if (response.IsSuccessStatusCode)
             {
-                var response = await _httpClient.GetAsync($"Message/history/{conversationId}");
-                if (response.IsSuccessStatusCode)
-                {
-                    // Map tá»« DTO Server vá» Model hiá»ƒn thá»‹ cá»§a WPF
-                    var history = await response.Content.ReadFromJsonAsync<List<MessageModel>>();
-                    return history ?? new List<MessageModel>();
-                }
+                return await response.Content.ReadFromJsonAsync<List<MessageModel>>() ?? new List<MessageModel>();
             }
-            catch (Exception ex) { /* Log lá»—i */ }
+            else
+            {
+                // MÃY QUÃ‰T Lá»–I: Náº¿u API tháº¥t báº¡i, nÃ³ sáº½ pop-up lÃªn bÃ¡o cho báº¡n biáº¿t ngay!
+                string errorDetail = await response.Content.ReadAsStringAsync();
+                System.Windows.MessageBox.Show($"KhÃ´ng thá»ƒ táº£i lá»‹ch sá»­!\nHTTP Status: {response.StatusCode}\nChi tiáº¿t: {errorDetail}", "Debug tá»« API Server");
+            }
+
             return new List<MessageModel>();
         }
         public static async Task<List<ChatListResponse>> GetMyChatsAsync(string userId)
@@ -101,7 +104,33 @@ namespace Hermes.Backend.Services
             catch { /* Xá»­ lÃ½ lá»—i máº¡ng */ }
             return new List<ChatListResponse>();
         }
-    }
+        public static async Task<Dictionary<string, string>> GetParticipantPublicKeysAsync(int conversationId)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync($"Conversation/{conversationId}/public-keys");
+                if (response.IsSuccessStatusCode)
+                {
+                    return await response.Content.ReadFromJsonAsync<Dictionary<string, string>>() ?? new Dictionary<string, string>();
+                }
+            }
+            catch { /* Lá»—i máº¡ng */ }
+
+            return new Dictionary<string, string>();
+        }
+        public static async Task<string> GetUsernameAsync(string userId)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync($"Conversation/username/{userId}");
+                if (response.IsSuccessStatusCode)
+                {
+                    return await response.Content.ReadAsStringAsync() ?? "Unknown";
+                }
+            }
+            catch { /* Lá»—i máº¡ng */ }
+            return "Unknown";
+        }
 }
 
 --- FILE: AuthService.cs ---
@@ -122,8 +151,9 @@ namespace Hermes
         private static FirebaseAuthProvider _authProvider;
         public static string CurrentUserId { get; private set; }
         public static string CurrentToken { get; private set; }
-        public static string CurrentPrivateKey { get; private set; }
+        public static string CurrentPrivateKey { get; set; }
         public static string CurrentPublicKey { get; private set; }
+
 
         static AuthService()
         {
@@ -146,6 +176,7 @@ namespace Hermes
                     CurrentUserId = auth.User.LocalId;
                     CurrentToken = auth.FirebaseToken;
                     await LoadUserKeysAsync(CurrentUserId, password);
+
                     return true;
                 }
                 return false;
@@ -247,9 +278,7 @@ namespace Hermes
 
         public static string GetUsernameByIdentifier(string identifier)
         {
-            // Now managed by API, this method is left for backward compatibility in WPF UI locally if needed,
-            // or replace it directly async
-            return null; // temporary stub
+            
         }
 
         private static async Task LoadUserKeysAsync(string userId, string password)
@@ -260,6 +289,7 @@ namespace Hermes
                 CurrentPublicKey = keys.PublicKey;
                 var masterKey = CryptoService.DeriveMasterKey(password, keys.Salt);
                 CurrentPrivateKey = CryptoService.DecryptPrivateKey(keys.WrappedPrivateKey, masterKey);
+                CryptoService.SavePrivateKeyLocal(CurrentPrivateKey);
             }
         }
     }
@@ -290,6 +320,77 @@ namespace Hermes.Backend.Services
 {
     public static class CryptoService
     {
+        // ÄÆ°á»ng dáº«n lÆ°u file khÃ³a báº£o máº­t trong thÆ° má»¥c AppData cá»§a User Windows
+        private static readonly string KeyFilePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HermesChat",
+            "user_secure.dat"
+        );
+
+        // 1. MÃƒ HÃ“A VÃ€ LÆ¯U PRIVATE KEY XUá»NG á»” Cá»¨NG
+        public static void SavePrivateKeyLocal(string privateKeyRaw)
+        {
+            try
+            {
+                byte[] plaintextBytes = Encoding.UTF8.GetBytes(privateKeyRaw);
+
+                // DPAPI mÃ£ hÃ³a: KhÃ³a cháº·t vÃ o tÃ i khoáº£n Windows hiá»‡n táº¡i
+                byte[] encryptedBytes = ProtectedData.Protect(
+                    plaintextBytes,
+                    null,
+                    DataProtectionScope.CurrentUser
+                );
+
+                // Táº¡o thÆ° má»¥c náº¿u chÆ°a tá»“n táº¡i
+                string directory = Path.GetDirectoryName(KeyFilePath);
+                if (!Directory.Exists(directory)) Directory.CreateDirectory(directory);
+
+                // Ghi file nhá»‹ phÃ¢n xuá»‘ng á»• cá»©ng
+                File.WriteAllBytes(KeyFilePath, encryptedBytes);
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show($"Lá»—i DPAPI khi lÆ°u khÃ³a: {ex.Message}");
+            }
+        }
+
+        // 2. GIáº¢I MÃƒ VÃ€ Táº¢I PRIVATE KEY Tá»ª á»” Cá»¨NG LÃŠN RAM
+        public static string LoadPrivateKeyLocal()
+        {
+            try
+            {
+                if (!File.Exists(KeyFilePath)) return null;
+
+                byte[] encryptedBytes = File.ReadAllBytes(KeyFilePath);
+
+                // DPAPI giáº£i mÃ£: Náº¿u copy file nÃ y sang mÃ¡y khÃ¡c, hÃ m nÃ y sáº½ nÃ©m ra ngoáº¡i lá»‡ láº­p tá»©c
+                byte[] decryptedBytes = ProtectedData.Unprotect(
+                    encryptedBytes,
+                    null,
+                    DataProtectionScope.CurrentUser
+                );
+
+                return Encoding.UTF8.GetString(decryptedBytes);
+            }
+            catch (CryptographicException)
+            {
+                // File bá»‹ phÃ¡ hoáº¡i hoáº·c bá»‹ mang sang mÃ¡y khÃ¡c trÃ¡i phÃ©p
+                return null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        // 3. XÃ“A KHÃ“A Cá»¤C Bá»˜ (Khi ngÆ°á»i dÃ¹ng báº¥m ÄÄƒng xuáº¥t)
+        public static void ClearPrivateKeyLocal()
+        {
+            if (File.Exists(KeyFilePath))
+            {
+                File.Delete(KeyFilePath);
+            }
+        }
         private const int Iterations = 300_000;
         private const int KeySize = 32; // 256 bits
 
@@ -322,24 +423,29 @@ namespace Hermes.Backend.Services
             }
         }
 
+        // --- CHUáº¨N HÃ“A MÃƒ HÃ“A LAI AES-GCM (HYBRID ENCRYPTION) ---
+
         public static string EncryptWithAES(string plainText, byte[] key)
         {
+            if (string.IsNullOrEmpty(plainText)) return string.Empty;
+
             byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
-            byte[] nonce = new byte[12]; // GCM standard nonce size
+            byte[] nonce = new byte[12]; // GCM kÃ­ch thÆ°á»›c Nonce tiÃªu chuáº©n
+
             using (var rng = RandomNumberGenerator.Create())
             {
                 rng.GetBytes(nonce);
             }
 
             byte[] cipherText = new byte[plainBytes.Length];
-            byte[] tag = new byte[16]; // auth tag
+            byte[] tag = new byte[16]; // GCM kÃ­ch thÆ°á»›c Auth Tag tiÃªu chuáº©n
 
             using (var aesGcm = new AesGcm(key))
             {
                 aesGcm.Encrypt(nonce, plainBytes, cipherText, tag);
             }
 
-            // Return Base64(nonce + tag + cipherText)
+            // Gá»™p chuá»—i theo cáº¥u trÃºc: [Nonce (12B)] + [Tag (16B)] + [CipherText]
             byte[] result = new byte[nonce.Length + tag.Length + cipherText.Length];
             Buffer.BlockCopy(nonce, 0, result, 0, nonce.Length);
             Buffer.BlockCopy(tag, 0, result, nonce.Length, tag.Length);
@@ -350,24 +456,50 @@ namespace Hermes.Backend.Services
 
         public static string DecryptWithAES(string cipherTextBase64, byte[] key)
         {
-            byte[] data = Convert.FromBase64String(cipherTextBase64);
-            byte[] nonce = new byte[12];
-            byte[] tag = new byte[16];
-            byte[] cipherText = new byte[data.Length - nonce.Length - tag.Length];
+            if (string.IsNullOrEmpty(cipherTextBase64)) return string.Empty;
 
-            Buffer.BlockCopy(data, 0, nonce, 0, nonce.Length);
-            Buffer.BlockCopy(data, nonce.Length, tag, 0, tag.Length);
-            Buffer.BlockCopy(data, nonce.Length + tag.Length, cipherText, 0, cipherText.Length);
-
-            byte[] plainBytes = new byte[cipherText.Length];
-
-            using (var aesGcm = new AesGcm(key))
+            try
             {
-                aesGcm.Decrypt(nonce, cipherText, tag, plainBytes);
-            }
+                byte[] data = Convert.FromBase64String(cipherTextBase64);
 
-            return Encoding.UTF8.GetString(plainBytes);
+                int nonceSize = 12;
+                int tagSize = 16;
+
+                // Kiá»ƒm tra gÃ³i tin cÃ³ Ä‘á»§ Ä‘á»™ dÃ i tá»‘i thiá»ƒu cá»§a cáº¥u trÃºc GCM hay khÃ´ng
+                if (data.Length < nonceSize + tagSize)
+                    return "[Lá»—i: GÃ³i tin mÃ£ hÃ³a khÃ´ng há»£p lá»‡ hoáº·c bá»‹ korrupt]";
+
+                byte[] nonce = new byte[nonceSize];
+                byte[] tag = new byte[tagSize];
+                byte[] cipherText = new byte[data.Length - nonceSize - tagSize];
+
+                // BÃ³c tÃ¡ch chÃ­nh xÃ¡c tá»«ng phÃ¢n Ä‘oáº¡n tá»« máº£ng byte tá»•ng thá»ƒ
+                Buffer.BlockCopy(data, 0, nonce, 0, nonceSize);
+                Buffer.BlockCopy(data, nonceSize, tag, 0, tagSize);
+                Buffer.BlockCopy(data, nonceSize + tagSize, cipherText, 0, cipherText.Length);
+
+                byte[] plainBytes = new byte[cipherText.Length];
+
+                using (var aesGcm = new AesGcm(key))
+                {
+                    // Tá»± Ä‘á»™ng kiá»ƒm tra tÃ­nh toÃ n váº¹n thÃ´ng qua Auth Tag
+                    aesGcm.Decrypt(nonce, cipherText, tag, plainBytes);
+                }
+
+                return Encoding.UTF8.GetString(plainBytes);
+            }
+            catch (CryptographicException)
+            {
+                // Tráº£ vá» thÃ´ng bÃ¡o lá»—i chung náº¿u chuá»—i cipher bá»‹ sá»­a Ä‘á»•i trÃ¡i phÃ©p (Auth Tag sai)
+                return "[Lá»—i: KhÃ´ng thá»ƒ xÃ¡c thá»±c hoáº·c giáº£i mÃ£ tin nháº¯n nÃ y]";
+            }
+            catch (Exception)
+            {
+                return "[Lá»—i há»‡ thá»‘ng khi xá»­ lÃ½ giáº£i mÃ£ E2EE]";
+            }
         }
+
+
 
         public static string EncryptPrivateKey(string privateKeyBase64, byte[] masterKey)
         {
@@ -399,6 +531,15 @@ namespace Hermes.Backend.Services
                 return decrypted;
             }
         }
+        public static byte[] GenerateRandomKey(int size = 32)
+        {
+            byte[] key = new byte[size];
+            using (var rng = RandomNumberGenerator.Create())
+            {
+                rng.GetBytes(key);
+            }
+            return key;
+        }
     }
 }
 
@@ -414,9 +555,9 @@ namespace Hermes.Backend.Services
     public class SignalRService
     {
         private HubConnection _connection;
-        public event Action<string, string> OnReceiveMessage;
+        public event Action<string, string, Dictionary<string, string>> OnReceiveMessage;
         public event Action<string, string, int> OnIncomingCall;
-
+        public event Action OnNewChatNotification;
         // ThÃªm Event bÃ¡o tráº¡ng thÃ¡i Online/Offline
         public event Action<string, bool> OnUserStatusChanged;
 
@@ -427,9 +568,9 @@ namespace Hermes.Backend.Services
                 .WithAutomaticReconnect() // Tá»± káº¿t ná»‘i láº¡i náº¿u rá»›t máº¡ng
                 .Build();
 
-            _connection.On<string, string>("ReceiveMessage", (senderId, encryptedMessage) =>
+            _connection.On<string, string, Dictionary<string, string>>("ReceiveMessage", (conversationId, encryptedMessage, recipientKeys) =>
             {
-                OnReceiveMessage?.Invoke(senderId, encryptedMessage);
+                OnReceiveMessage?.Invoke(conversationId, encryptedMessage, recipientKeys);
             });
 
             _connection.On<string, string, int>("IncomingCall", (callerId, ip, port) =>
@@ -441,6 +582,11 @@ namespace Hermes.Backend.Services
             _connection.On<string, bool>("UserStatusChanged", (userId, isOnline) =>
             {
                 OnUserStatusChanged?.Invoke(userId, isOnline);
+            });
+            // 2. ThÃªm cÃ¡i nÃ y vÃ o trong Constructor Ä‘á»ƒ láº¯ng nghe Server
+            _connection.On("ReceiveNewChatNotification", () =>
+            {
+                OnNewChatNotification?.Invoke();
             });
         }
 
@@ -465,11 +611,11 @@ namespace Hermes.Backend.Services
             }
         }
 
-        public async Task SendMessageAsync(string receiverId, string encryptedMessage)
+        public async Task SendMessageAsync(string conversationId, string message, Dictionary<string, string> recipientKeys)
         {
-            if (_connection.State == HubConnectionState.Connected)
+            if (_connection.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected)
             {
-                await _connection.InvokeAsync("SendMessage", receiverId, encryptedMessage);
+                await _connection.InvokeAsync("SendMessage", conversationId, message, recipientKeys);
             }
         }
 
@@ -487,6 +633,20 @@ namespace Hermes.Backend.Services
                 return await _connection.InvokeAsync<List<string>>("GetOnlineUsers");
             }
             return new List<string>();
+        }
+        public async Task JoinRoomAsync(string conversationId)
+        {
+            if (_connection.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected)
+            {
+                await _connection.InvokeAsync("JoinRoom", conversationId);
+            }
+        }
+        public async Task SendNewChatNotificationAsync(List<string> participantIds)
+        {
+            if (_connection.State == HubConnectionState.Connected)
+            {
+                await _connection.InvokeAsync("NotifyNewChat", participantIds);
+            }
         }
     }
 }
@@ -894,13 +1054,14 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Collections.Generic;
 
 namespace Hermes
 {
     public partial class ChatWindow : Window
     {
         public ObservableCollection<ChatModel> Chats { get; set; }
-        private SignalRService _signalRService; // Thêm dòng này
+        private SignalRService _signalRService;
 
         public ChatWindow()
         {
@@ -908,50 +1069,82 @@ namespace Hermes
             Chats = new ObservableCollection<ChatModel>();
             lstChats.ItemsSource = Chats;
 
-            // 1. Khởi tạo SignalR kết nối đến Server
+            // 1. Khởi tạo SignalR
             _signalRService = new SignalRService("http://localhost:5042/chathub");
 
-            // 2. Lắng nghe sự kiện có người nhắn tin tới
+            // 2. Lắng nghe sự kiện nhắn tin tới
             _signalRService.OnReceiveMessage += SignalR_OnReceiveMessage;
 
-            // 3. Tự động Connect khi cửa sổ vừa load xong
+            // 3. Tự động Connect
             this.Loaded += async (s, e) => {
+                // BƯỚC A: Phải đợi kết nối SignalR thành công 100%...
                 await _signalRService.ConnectAsync(AuthService.CurrentUserId);
+
+                // BƯỚC B: ...Thì mới được gọi hàm lấy danh sách chat & chui vào phòng!
+                LoadRealChatsAsync();
             };
 
-            LoadRealChatsAsync();
+            // Đăng ký nhận thông báo có phòng chat mới
+            _signalRService.OnNewChatNotification += () =>
+            {
+                Dispatcher.Invoke(async () =>
+                {
+                    // GỌI LẠI HÀM TẢI DANH SÁCH CHAT CỦA BẠN TẠI ĐÂY
+                    await LoadRealChatsAsync();
+                    // (Thay tên hàm bằng hàm thực tế bạn dùng để đổ dữ liệu vào lstChats)
+                });
+            };
+            await _signalRService.SendNewChatNotificationAsync(participantIds);
         }
-        private void SignalR_OnReceiveMessage(string senderId, string message)
+
+        // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
+        private void SignalR_OnReceiveMessage(string conversationId, string cipherText, Dictionary<string, string> recipientKeys)
         {
-            // Đẩy tác vụ vẽ UI về luồng chính của WPF
             Application.Current.Dispatcher.Invoke(() =>
             {
-                if (lstChats.SelectedItem is ChatModel currentChat)
+                var targetChat = Chats.FirstOrDefault(c => c.ChatId == conversationId);
+                if (targetChat != null)
                 {
-                    // Cập nhật lên màn hình ngay lập tức
-                    currentChat.Messages.Add(new MessageModel
+                    string plainText = "[Tin nhắn mã hóa]";
+
+                    // --- BẮT ĐẦU GIẢI MÃ ---
+                    // Tìm chìa khóa AES của riêng mình trong cái rổ chìa khóa Server gửi về
+                    if (recipientKeys.TryGetValue(AuthService.CurrentUserId, out string myEncryptedSessionKey))
                     {
-                        SenderName = "Friend", // Tạm để chữ Friend, sau này map với DB
-                        Content = message,
+                        try
+                        {
+                            byte[] aesKey = Backend.Services.CryptoService.DecryptSessionKeyWithRSA(myEncryptedSessionKey, AuthService.CurrentPrivateKey);
+                            plainText = Backend.Services.CryptoService.DecryptWithAES(cipherText, aesKey);
+                        }
+                        catch { plainText = "[Lỗi giải mã E2EE]"; }
+                    }
+                    // -----------------------
+
+                    targetChat.Messages.Add(new MessageModel
+                    {
+                        SenderName = "Friend",
+                        Content = plainText, // Gán text đã giải mã thành công vào UI
                         Time = DateTime.Now.ToString("hh:mm tt"),
                         IsMine = false
                     });
 
-                    currentChat.LastMessage = message;
-                    svMessages.ScrollToEnd();
+                    // Nếu phòng đó ĐANG ĐƯỢC MỞ trên màn hình, thì cuộn xuống
+                    if (lstChats.SelectedItem is ChatModel currentChat && currentChat.ChatId == conversationId)
+                    {
+                        svMessages.ScrollToEnd();
+                    }
                 }
             });
         }
+
         private async void LoadRealChatsAsync()
         {
-            // Gọi API lấy danh sách phòng chat của mình
-            var myChats = await ApiClient.GetMyChatsAsync(AuthService.CurrentUserId);
-
+            var myChats = await Backend.Services.ApiClient.GetMyChatsAsync(AuthService.CurrentUserId);
             Chats.Clear();
+
             foreach (var c in myChats)
             {
                 string displayName = c.IsGroup ? c.GroupName : c.OtherUserName;
-
                 Chats.Add(new ChatModel
                 {
                     ChatId = c.ChatId,
@@ -961,37 +1154,48 @@ namespace Hermes
                     LastMessage = "Bấm để xem tin nhắn...",
                     LastMessageTime = ""
                 });
+
+                // THÊM ĐÚNG DÒNG NÀY: Ép SignalR chui vào phòng này để chờ tin nhắn
+                await _signalRService.JoinRoomAsync(c.ChatId);
             }
 
-            // Tự động chọn phòng đầu tiên
-            if (Chats.Any())
-            {
-                lstChats.SelectedIndex = 0;
-            }
+            if (Chats.Any()) lstChats.SelectedIndex = 0;
         }
 
         private async void lstChats_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (lstChats.SelectedItem is ChatModel selectedChat)
             {
-                // (Thay tên GridWelcome và GridChat bằng đúng x:Name trong file ChatWindow.xaml của bạn)
                 if (GridWelcome != null) GridWelcome.Visibility = Visibility.Collapsed;
                 if (GridChat != null) GridChat.Visibility = Visibility.Visible;
 
-                // 2. Clear tin nhắn cũ trên UI
                 selectedChat.Messages.Clear();
 
-                // 3. Lấy lịch sử từ Database
-                var history = await Backend.Services.ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId));
+                // Thay dòng gọi API cũ bằng dòng này
+                var history = await Backend.Services.ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId), AuthService.CurrentUserId);
 
-                // 4. Đổ dữ liệu vào UI
                 foreach (var msg in history)
                 {
                     msg.IsMine = (msg.SenderId == AuthService.CurrentUserId);
+
+                    // --- BẮT ĐẦU GIẢI MÃ ---
+                    // Đã xóa "!msg.IsMine &&", giờ tin nào có khóa là giải mã láng hết!
+                    if (!string.IsNullOrEmpty(msg.EncryptedSessionKey))
+                    {
+                        try
+                        {
+                            // 1. Mở khóa AES bằng Private Key của mình
+                            byte[] aesKey = Backend.Services.CryptoService.DecryptSessionKeyWithRSA(msg.EncryptedSessionKey, AuthService.CurrentPrivateKey);
+
+                            // 2. Dùng khóa AES vừa mở để giải mã nội dung tin nhắn
+                            msg.Content = Backend.Services.CryptoService.DecryptWithAES(msg.Content, aesKey);
+                        }
+                        catch { msg.Content = "[Lỗi giải mã E2EE]"; }
+                    }
+                    // -----------------------
+
                     selectedChat.Messages.Add(msg);
                 }
-
-                svMessages.ScrollToEnd();
             }
         }
 
@@ -1013,7 +1217,7 @@ namespace Hermes
                     string newChatName = createChat.ChatName;
                     var userIds = createChat.UserIds.ToList();
 
-                    int newConvId = await Hermes.Backend.Services.ApiClient.CreateConversationAsync(createChat.IsGroup, createChat.IsGroup ? newChatName : null, userIds);
+                    int newConvId = await Backend.Services.ApiClient.CreateConversationAsync(createChat.IsGroup, createChat.IsGroup ? newChatName : null, userIds);
 
                     if (newConvId == -1)
                     {
@@ -1041,6 +1245,7 @@ namespace Hermes
             }
         }
 
+        // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ PHÁT SIGNALR CHUẨN XÁC ---
         private async void btnSendMessage_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrWhiteSpace(txtMessageInput.Text)) return;
@@ -1050,55 +1255,70 @@ namespace Hermes
                 string plainText = txtMessageInput.Text.Trim();
                 string currentTime = DateTime.Now.ToString("hh:mm tt");
 
-                // 1. Cập nhật giao diện mượt mà (Giữ nguyên logic cũ)
+                // 1. Cập nhật giao diện mượt mà (Vẫn hiển thị chữ thật cho người gửi xem)
                 currentChat.Messages.Add(new MessageModel { SenderName = "You", Content = plainText, Time = currentTime, IsMine = true });
                 currentChat.LastMessage = "You: " + plainText;
                 currentChat.LastMessageTime = currentTime;
                 txtMessageInput.Text = "";
                 svMessages.ScrollToEnd();
 
-                // --- 2. LOGIC BACKEND: LƯU DATABASE ---
+                // 2. LƯU DATABASE BẰNG MÃ HÓA LAI (HYBRID ENCRYPTION)
                 try
                 {
-                    // Parse ConversationId từ ChatId của UI
-                    if (!int.TryParse(currentChat.ChatId, out int convId))
+                    if (!int.TryParse(currentChat.ChatId, out int convId)) return;
+
+                    // --- BƯỚC MẬT MÃ HÓA ---
+                    // A. Sinh khóa phiên AES (Session Key) dùng một lần cho tin nhắn này
+                    byte[] sessionKey = Backend.Services.CryptoService.GenerateRandomKey();
+
+                    // B. Mã hóa nội dung tin nhắn bằng khóa AES vừa tạo
+                    string cipherText = Backend.Services.CryptoService.EncryptWithAES(plainText, sessionKey);
+
+                    // C. Lấy Public Key của tất cả thành viên trong phòng chat
+                    var publicKeys = await Backend.Services.ApiClient.GetParticipantPublicKeysAsync(convId);
+                    if (publicKeys.Count == 0)
                     {
-                        MessageBox.Show("Lỗi: ID cuộc trò chuyện không hợp lệ.");
+                        MessageBox.Show("Không thể tải khóa bảo mật của phòng chat!");
                         return;
                     }
 
-                    // Tạo DTO để gửi lên Server
+                    // D. Bọc (Wrap) khóa AES bằng RSA Public Key của TỪNG NGƯỜI
+                    var recipientKeys = new Dictionary<string, string>();
+                    foreach (var pk in publicKeys)
+                    {
+                        string userId = pk.Key;
+                        string publicKeyBase64 = pk.Value;
+
+                        recipientKeys[userId] = Backend.Services.CryptoService.EncryptSessionKeyWithRSA(sessionKey, publicKeyBase64);
+                    }
+
+                    // E. Gói toàn bộ dữ liệu mã hóa thành DTO
                     var dto = new Hermes.Shared.DTOs.SendMessageDto
                     {
                         ConversationId = convId,
                         SenderId = AuthService.CurrentUserId,
-
-                        CipherText = plainText,
+                        CipherText = cipherText, // Gửi chuỗi mã hóa lên Server, tuyệt đối KHÔNG gửi plainText
                         TimeToLive = 0,
-
-                        // TODO: Tạm thời để trống. Sau này sẽ mã hóa Session Key bằng RSA Public Key của đối phương
-                        RecipientSessionKeys = new Dictionary<string, string>()
+                        RecipientSessionKeys = recipientKeys // Các chìa khóa AES đã được khóa chặt bằng RSA
                     };
 
-                    // Gọi API lưu tin nhắn xuống MySQL
-                    // Gọi API lưu tin nhắn xuống MySQL
+                    // Gọi API lưu tin nhắn an toàn xuống MySQL
                     bool isSaved = await Backend.Services.ApiClient.SaveMessageAsync(dto);
 
                     if (isSaved)
                     {
-                        // --- 3. BẮN SIGNALR ĐỂ REAL-TIME ---
-                        // (Lưu ý: Để nhắn trúng người, bạn cần thay "ID_NGUOI_NHAN" bằng UserID thực tế của đối phương. 
-                        // Tạm thời để test, bạn có thể hardcode UserID của tài khoản thứ 2 vào đây).
-                        await _signalRService.SendMessageAsync("ID_NGUOI_NHAN", plainText);
+                        // 3. BẮN SIGNALR ĐỂ REAL-TIME
+                        // Phát trực tiếp đoạn mã hóa (cipherText) qua WebSocket cho máy bên kia
+                        // Truyền thêm recipientKeys vào
+                        await _signalRService.SendMessageAsync(currentChat.ChatId, cipherText, recipientKeys);
                     }
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"Lỗi hệ thống khi gửi tin nhắn: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show($"Lỗi hệ thống khi mã hóa E2EE: {ex.Message}", "Lỗi Bảo Mật", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
         }
-
     }
 }
 
@@ -1440,6 +1660,22 @@ namespace Hermes
         public MainWindow()
         {
             InitializeComponent();
+
+            // KIỂM TRA: Dưới ổ cứng có chìa khóa không?
+            string savedKey = Backend.Services.CryptoService.LoadPrivateKeyLocal();
+            if (!string.IsNullOrEmpty(savedKey))
+            {
+                // Có khóa! Nạp lên RAM luôn
+                AuthService.CurrentPrivateKey = savedKey;
+
+                // Lưu ý: Tùy kiến trúc của bạn, bạn cần lưu thêm ID hoặc Email user vào setting cục bộ
+                // để API biết là ai đang login. Giả sử bạn lưu ID thành công:
+                // AuthService.CurrentUserId = "..."; 
+
+                //ChatWindow chat = new ChatWindow();
+                //chat.Show();
+                //this.Close();
+            }
         }
 
         private bool IsValidEmail(string email)
@@ -1654,38 +1890,59 @@ namespace Hermes
 <Window x:Class="Hermes.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="CÃ i Ä‘áº·t" Height="400" Width="350"
+        Title="CÃ i Ä‘áº·t" Height="450" Width="350"
         WindowStartupLocation="CenterOwner" Background="#F9FAFB" ResizeMode="NoResize">
-    
-    <Grid Margin="20">
+
+    <Window.Resources>
+        <Style TargetType="Button" x:Key="ModernButtonStyle">
+            <Setter Property="Padding" Value="10"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" CornerRadius="6" Background="{TemplateBinding Background}" BorderThickness="0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="25">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="CÃ i Ä‘áº·t tÃ i khoáº£n" FontSize="20" FontWeight="Bold" Foreground="#1F2937" HorizontalAlignment="Center" Margin="0,0,0,20"/>
+        <TextBlock Text="CÃ i Ä‘áº·t tÃ i khoáº£n" FontSize="20" FontWeight="Bold" Foreground="#1F2937" HorizontalAlignment="Center" Margin="0,0,0,25"/>
 
         <StackPanel Grid.Row="1">
-            <Ellipse Width="80" Height="80" Fill="#9CA3AF" HorizontalAlignment="Center" Margin="0,0,0,15"/>
-            
-            <TextBlock Text="ThÃ´ng tin cÃ¡ nhÃ¢n" FontWeight="Bold" Foreground="#4B5563" Margin="0,10,0,5"/>
-            <Border Background="White" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="5" Padding="10">
+            <Ellipse Width="80" Height="80" Fill="#E5E7EB" HorizontalAlignment="Center" Margin="0,0,0,15"/>
+
+            <TextBlock Text="ThÃ´ng tin Ä‘á»‹nh danh" FontWeight="SemiBold" Foreground="#6B7280" FontSize="12" Margin="0,10,0,5"/>
+            <Border Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="15">
                 <StackPanel>
-                    <TextBlock x:Name="txtUserEmail" Text="Email: ..." Foreground="#6B7280" Margin="0,0,0,5"/>
-                    <TextBlock x:Name="txtUserId" Text="ID: ..." Foreground="#6B7280"/>
+                    <TextBlock x:Name="txtUserName" Text="TÃªn: loading..." Foreground="#111827" FontWeight="Bold" FontSize="16" Margin="0,0,0,5"/>
+                    <TextBlock x:Name="txtUserEmail" Text="Email: loading..." Foreground="#4B5563" FontWeight="Medium" Margin="0,0,0,8"/>
+                    <TextBlock x:Name="txtUserId" Text="ID: ..." Foreground="#9CA3AF" FontSize="12"/>
                 </StackPanel>
             </Border>
+
+            <Button Content="ðŸ”‘ Xem khÃ³a báº£o máº­t (RSA)" Click="btnSettings_Click" 
+                    Background="#3B82F6" Foreground="White" FontWeight="SemiBold" 
+                    Style="{StaticResource ModernButtonStyle}" Margin="0,25,0,0"/>
         </StackPanel>
 
-        <Button x:Name="btnLogout" Grid.Row="2" Content="ÄÄƒng xuáº¥t" Height="40" Background="#EF4444" 
-                Foreground="White" FontWeight="Bold" FontSize="14" Cursor="Hand" Click="btnLogout_Click">
-            <Button.Resources>
-                <Style TargetType="Border">
-                    <Setter Property="CornerRadius" Value="5"/>
-                </Style>
-            </Button.Resources>
-        </Button>
+        <Button x:Name="btnLogout" Grid.Row="2" Content="ÄÄƒng xuáº¥t" Height="42" 
+                Background="#FEE2E2" Foreground="#EF4444" FontWeight="Bold" 
+                Style="{StaticResource ModernButtonStyle}" Click="btnLogout_Click" Margin="0,10,0,0"/>
     </Grid>
 </Window>
 
@@ -1709,6 +1966,7 @@ namespace Hermes
         {
             txtUserId.Text = "UID: " + (AuthService.CurrentUserId ?? "N/A");
             txtUserEmail.Text = "Email: " + (Environment.GetEnvironmentVariable("USER_EMAIL") ?? "TÃ i khoáº£n hiá»‡n táº¡i");
+            txtUserName.Text = "TÃªn ngÆ°á»i dÃ¹ng: " + (AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId) ?? "N/A");  
         }
 
         private void btnLogout_Click(object sender, RoutedEventArgs e)
@@ -1730,6 +1988,12 @@ namespace Hermes
                     }
                 }
             }
+        }
+        private void btnSettings_Click(object sender, RoutedEventArgs e)
+        {
+            // Äoáº¡n code báº¡n Ä‘Ã£ viáº¿t
+            string myPrivateKey = AuthService.CurrentPrivateKey;
+            MessageBox.Show($"ÄÃ‚Y LÃ€ KHÃ“A BÃ Máº¬T RSA Cá»¦A Báº N:\n\n{myPrivateKey}", "KhÃ³a cÃ¡ nhÃ¢n", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 }
@@ -1966,6 +2230,42 @@ namespace Hermes.Server.Controllers
             var chats = await connection.QueryAsync<ChatListResponse>(query, new { UserId = userId });
             return Ok(chats);
         }
+
+        [HttpGet("{conversationId}/public-keys")]
+        public async Task<IActionResult> GetParticipantPublicKeys(int conversationId)
+        {
+            using var connection = new MySqlConnection(ConnectionString);
+
+            // Câu truy vấn lấy Public Key của tất cả user đang nằm trong Conversation này
+            string query = @"
+        SELECT u.Id as UserId, u.PublicKey 
+        FROM PARTICIPANTS p
+        JOIN USERS u ON p.UserId = u.Id
+        WHERE p.ConversationId = @ConvId";
+
+            var keys = await connection.QueryAsync(query, new { ConvId = conversationId });
+
+            // Trả về một Dictionary dạng { "UserId": "PublicKey_Base64" }
+            var result = keys.ToDictionary(k => (string)k.UserId, k => (string)k.PublicKey);
+
+            return Ok(result);
+        }
+        [HttpGet("history/{conversationId}/{userId}")]
+        public async Task<IActionResult> GetChatHistory(int conversationId, string userId)
+        {
+            using var connection = new MySqlConnection(ConnectionString);
+
+            string query = @"
+        SELECT m.SenderId, i.FullName as SenderName, m.CipherText as Content, m.SentAt as Time, mr.EncryptedSessionKey
+        FROM MESSAGES m
+        JOIN USERINFO i ON m.SenderId = i.UserId
+        JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId
+        WHERE m.ConversationId = @ConvId AND mr.RecipientId = @UserId
+        ORDER BY m.SentAt ASC";
+
+            var history = await connection.QueryAsync(query, new { ConvId = conversationId, UserId = userId });
+            return Ok(history);
+        }
     }
 }
 
@@ -1975,6 +2275,8 @@ using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 using Dapper;
 using Hermes.Shared.DTOs;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 
 namespace Hermes.Server.Controllers
 {
@@ -2028,21 +2330,23 @@ namespace Hermes.Server.Controllers
                 return StatusCode(500, "Lỗi khi lưu tin nhắn vào Database");
             }
         }
-        // Lấy lịch sử tin nhắn của một cuộc trò chuyện
-        [HttpGet("history/{conversationId}")]
-        public async Task<IActionResult> GetChatHistory(int conversationId)
+        [HttpGet("history/{conversationId}/{userId}")]
+        public async Task<IActionResult> GetChatHistory(int conversationId, string userId)
         {
             using var connection = new MySqlConnection(ConnectionString);
 
-            // Join bảng MESSAGES và USERINFO để lấy tên người gửi
+            // Dùng DATE_FORMAT để ép MySQL trả về chữ (VD: 09:15 AM) thay vì kiểu DateTime, tránh lỗi cho C#
             string query = @"
-        SELECT m.SenderId, i.FullName as SenderName, m.CipherText as Content, m.SentAt as Time
-        FROM MESSAGES m
-        JOIN USERINFO i ON m.SenderId = i.UserId
-        WHERE m.ConversationId = @ConvId
-        ORDER BY m.SentAt ASC";
+                SELECT m.SenderId, i.FullName as SenderName, m.CipherText as Content, 
+                       DATE_FORMAT(m.SentAt, '%h:%i %p') as Time, 
+                       mr.EncryptedSessionKey
+                FROM MESSAGES m
+                JOIN USERINFO i ON m.SenderId = i.UserId
+                JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId
+                WHERE m.ConversationId = @ConvId AND mr.RecipientId = @UserId
+                ORDER BY m.SentAt ASC";
 
-            var history = await connection.QueryAsync(query, new { ConvId = conversationId });
+            var history = await connection.QueryAsync(query, new { ConvId = conversationId, UserId = userId });
             return Ok(history);
         }
     }
@@ -2068,6 +2372,7 @@ namespace Hermes.Server.Hubs
 
         public async Task RegisterUser(string userId)
         {
+            if (string.IsNullOrEmpty(userId)) return;
             var connectionId = Context.ConnectionId;
 
             // 1. ThÃªm vÃ o Map User -> Connections
@@ -2120,15 +2425,36 @@ namespace Hermes.Server.Hubs
             return _userConnections.Keys.ToList();
         }
 
-        // --- CÃC HÃ€M CÅ¨ GIá»® NGUYÃŠN ---
-        public async Task SendMessage(string receiverId, string encryptedMessage)
+        // HÃ m cho phÃ©p Client chui vÃ o má»™t phÃ²ng chat cá»¥ thá»ƒ
+        public async Task JoinRoom(string conversationId)
         {
-            await Clients.Group(receiverId).SendAsync("ReceiveMessage", Context.ConnectionId, encryptedMessage);
+            await Groups.AddToGroupAsync(Context.ConnectionId, conversationId);
+        }
+
+        // --- CÃC HÃ€M CÅ¨ GIá»® NGUYÃŠN ---
+        // Äá»•i tham sá»‘ hÃ m SendMessage
+        public async Task SendMessage(string conversationId, string encryptedMessage, Dictionary<string, string> recipientKeys)
+        {
+            // Báº¯n cáº£ dictionary khÃ³a qua máº¡ng
+            await Clients.OthersInGroup(conversationId).SendAsync("ReceiveMessage", conversationId, encryptedMessage, recipientKeys);
         }
 
         public async Task InitiateCall(string receiverId, string myIp, int myPort)
         {
             await Clients.Group(receiverId).SendAsync("IncomingCall", Context.ConnectionId, myIp, myPort);
+        }
+        // HÃ m nÃ y nháº­n danh sÃ¡ch nhá»¯ng ngÆ°á»i trong phÃ²ng má»›i vÃ  gá»i há» dáº­y
+        public async Task NotifyNewChat(List<string> participantIds)
+        {
+            foreach (var userId in participantIds)
+            {
+                // Kiá»ƒm tra xem ngÆ°á»i Ä‘Ã³ cÃ³ Ä‘ang online khÃ´ng
+                if (_userConnections.TryGetValue(userId, out var connectionId))
+                {
+                    // Gá»­i tÃ­n hiá»‡u "CÃ³ phÃ²ng má»›i kÃ¬a, load láº¡i Ä‘i!"
+                    await Clients.Client(connectionId).SendAsync("ReceiveNewChatNotification");
+                }
+            }
         }
     }
 }
@@ -2332,6 +2658,7 @@ namespace Hermes.Shared.Models
 {
     public class MessageModel : INotifyPropertyChanged
     {
+        public string EncryptedSessionKey { get; set; }
         public string SenderId { get; set; }
         public string SenderName { get; set; }
         public string Content { get; set; }

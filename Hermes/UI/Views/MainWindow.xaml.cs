@@ -10,6 +10,22 @@ namespace Hermes
         public MainWindow()
         {
             InitializeComponent();
+
+            // KIỂM TRA: Dưới ổ cứng có chìa khóa không?
+            string savedKey = Backend.Services.CryptoService.LoadPrivateKeyLocal();
+            if (!string.IsNullOrEmpty(savedKey))
+            {
+                // Có khóa! Nạp lên RAM luôn
+                AuthService.CurrentPrivateKey = savedKey;
+
+                // Lưu ý: Tùy kiến trúc của bạn, bạn cần lưu thêm ID hoặc Email user vào setting cục bộ
+                // để API biết là ai đang login. Giả sử bạn lưu ID thành công:
+                // AuthService.CurrentUserId = "..."; 
+
+                //ChatWindow chat = new ChatWindow();
+                //chat.Show();
+                //this.Close();
+            }
         }
 
         private bool IsValidEmail(string email)
@@ -20,10 +36,11 @@ namespace Hermes
 
         private async void btnLogin_Click(object sender, RoutedEventArgs e)
         {
+            string email = txtEmail.Text.Trim();
+            string password = txtPassword.Password;
+
             try
             {
-                string email = txtEmail.Text.Trim();
-                string password = txtPassword.Password;
 
                 // 1. Kiểm tra rỗng
                 if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
@@ -58,8 +75,43 @@ namespace Hermes
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Lỗi đăng nhập: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
-                btnLogin.IsEnabled = true;
+                // BẮT MÃ LỖI ĐẶC BIỆT KHI SAI CHÌA KHÓA E2EE
+                if (ex.Message.Contains("E2EE_KEY_CORRUPTED"))
+                {
+                    var res = MessageBox.Show(
+                        "Bạn đang đăng nhập bằng mật khẩu mới nhưng hệ thống mã hóa E2EE từ chối giải mã.\n\n" +
+                        "Bạn có muốn ĐẶT LẠI TÀI KHOẢN? (Hệ thống sẽ tạo khóa bảo mật mới cho bạn, nhưng TOÀN BỘ lịch sử chat cũ sẽ không thể đọc được nữa).",
+                        "Cảnh báo bảo mật E2EE",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning);
+
+                    if (res == MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            await AuthService.ResetAccountKeysAsync(password);
+                            MessageBox.Show("Khôi phục tài khoản thành công! Khóa bảo mật mới đã được tạo.", "Thành công", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                            ChatWindow chat = new ChatWindow();
+                            chat.Show();
+                            this.Close();
+                        }
+                        catch (Exception resetEx)
+                        {
+                            MessageBox.Show(resetEx.Message, "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                            btnLogin.IsEnabled = true;
+                        }
+                    }
+                    else
+                    {
+                        btnLogin.IsEnabled = true;
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(ex.Message, "Lỗi đăng nhập", MessageBoxButton.OK, MessageBoxImage.Error);
+                    btnLogin.IsEnabled = true;
+                }
             }
         }
 
