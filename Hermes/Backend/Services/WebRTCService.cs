@@ -94,8 +94,29 @@ namespace Hermes.Client.Services
                 }
             };
 
-            _peerConnection.onicecandidate += (candidate) => OnIceCandidateReady?.Invoke(candidate.toJSON());
+            // 1. Lấy danh sách IP sạch (động) ngay khi khởi tạo cuộc gọi
+            var validIps = GetValidLocalIPs();
 
+            _peerConnection.onicecandidate += (candidate) =>
+            {
+                string candStr = candidate.candidate;
+
+                // 2. Candidate từ STUN server (srflx) hoặc TURN (relay) luôn là IP Public xịn -> Luôn cho phép
+                bool isStunOrTurn = candStr.Contains("typ srflx") || candStr.Contains("typ relay");
+
+                // 3. Kiểm tra xem IP trong chuỗi Candidate có nằm trong danh sách IP Sạch không
+                // Thêm khoảng trắng 2 đầu để match chính xác (vd: " 100.105.164.111 ")
+                bool isLocalValid = validIps.Any(ip => candStr.Contains($" {ip} "));
+
+                if (isLocalValid || isStunOrTurn)
+                {
+                    OnIceCandidateReady?.Invoke(candidate.toJSON());
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"🚫 [DYNAMIC FILTER] Đã chặn IP ảo/rác: {candStr}");
+                }
+            };
             // XÓA OnAudioFormatsNegotiated ĐỂ TRÁNH LỖI XUNG ĐỘT GHI ĐÈ
 
             _peerConnection.onconnectionstatechange += (state) =>
