@@ -39,9 +39,8 @@ namespace Hermes.Client.Services
             _peerConnection = new RTCPeerConnection(config);
             _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder());
 
-
             // ==========================================
-            // 🚀 CÚ CHỐT: DÙNG G722 (16kHz) CHIỀU LÒNG BLUETOOTH
+            // 🚀 CODEC: G722 (16kHz)
             // ==========================================
             var allFormats = _audioEndPoint.GetAudioSourceFormats();
             var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
@@ -52,59 +51,54 @@ namespace Hermes.Client.Services
 
             _audioEndPoint.SetAudioSinkFormat(targetFormat.First());
             System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn: {targetFormat.First().FormatName}");
-            // ==========================================
 
+            // ==========================================
+            // THU MIC VÀ GỬI (ĐÃ CHỐNG CRASH)
+            // ==========================================
             _audioEndPoint.OnAudioSourceEncodedSample += (duration, payload) =>
             {
                 bool isSilence = payload.All(b => b == 0 || b == 255);
                 if (!isSilence)
                 {
-                    // Tạm bật để thấy gói tin truyền đi
                     System.Diagnostics.Debug.WriteLine($"🎤 [MIC ĐANG SỐNG] Gửi {payload.Length} bytes âm thanh THẬT đi!");
                 }
-                _peerConnection.SendAudio(duration, payload);
+
+                // Dùng ?. để nếu cúp máy ngang, _peerConnection bị null thì không văng lỗi
+                _peerConnection?.SendAudio(duration, payload);
             };
 
             // ==========================================
-            // NHẬN ÂM THANH TỪ MẠNG ĐỔ RA LOA
+            // NHẬN TỪ MẠNG VÀ PHÁT LOA (GỘP LÀM 1 LẦN DUY NHẤT)
             // ==========================================
             _peerConnection.OnRtpPacketReceived += (System.Net.IPEndPoint rep, SDPMediaTypesEnum media, RTPPacket rtpPkt) =>
             {
                 if (media == SDPMediaTypesEnum.audio)
                 {
-                    // Tạm ẩn log
-                    // Debug.WriteLine("🔊 [TEST] Đã nhận được âm thanh từ mạng!"); 
-                    _audioEndPoint.GotAudioRtp(
+                    System.Diagnostics.Debug.WriteLine($"🔊 [MÁY NHẬN] Nhận {rtpPkt.Payload.Length} bytes | PayloadType: {rtpPkt.Header.PayloadType}");
+
+                    // Dùng ?. chống crash
+                    _audioEndPoint?.GotAudioRtp(
                         rep, rtpPkt.Header.SyncSource, rtpPkt.Header.SequenceNumber,
                         rtpPkt.Header.Timestamp, rtpPkt.Header.PayloadType,
                         rtpPkt.Header.MarkerBit == 1, rtpPkt.Payload);
                 }
             };
 
-            // 1. Lấy danh sách IP sạch (động) ngay khi khởi tạo cuộc gọi
+            // ==========================================
+            // BỘ LỌC MẠNG TAILSCALE
+            // ==========================================
             var validIps = GetValidLocalIPs();
-
             _peerConnection.onicecandidate += (candidate) =>
             {
                 string candStr = candidate.candidate;
-
-                // 2. Candidate từ STUN server (srflx) hoặc TURN (relay) luôn là IP Public xịn -> Luôn cho phép
                 bool isStunOrTurn = candStr.Contains("typ srflx") || candStr.Contains("typ relay");
-
-                // 3. Kiểm tra xem IP trong chuỗi Candidate có nằm trong danh sách IP Sạch không
-                // Thêm khoảng trắng 2 đầu để match chính xác (vd: " 100.105.164.111 ")
                 bool isLocalValid = validIps.Any(ip => candStr.Contains($" {ip} "));
 
                 if (isLocalValid || isStunOrTurn)
                 {
                     OnIceCandidateReady?.Invoke(candidate.toJSON());
                 }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"🚫 [DYNAMIC FILTER] Đã chặn IP ảo/rác: {candStr}");
-                }
             };
-            // XÓA OnAudioFormatsNegotiated ĐỂ TRÁNH LỖI XUNG ĐỘT GHI ĐÈ
 
             _peerConnection.onconnectionstatechange += (state) =>
             {
@@ -115,25 +109,12 @@ namespace Hermes.Client.Services
             try
             {
                 await _audioEndPoint.StartAudio();
-                Debug.WriteLine("✅ [TEST] Khởi động Micro/Loa thành công!");
+                System.Diagnostics.Debug.WriteLine("✅ [TEST] Khởi động Micro/Loa thành công!");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"❌ [LỖI NGHIÊM TRỌNG] Không thể bật Micro/Loa: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"❌ [LỖI NGHIÊM TRỌNG] Không thể bật Micro/Loa: {ex.Message}");
             }
-            _peerConnection.OnRtpPacketReceived += (System.Net.IPEndPoint rep, SDPMediaTypesEnum media, RTPPacket rtpPkt) =>
-            {
-                if (media == SDPMediaTypesEnum.audio)
-                {
-                    // In thêm PayloadType để kiểm chứng
-                    System.Diagnostics.Debug.WriteLine($"🔊 [MÁY NHẬN] Nhận {rtpPkt.Payload.Length} bytes | PayloadType: {rtpPkt.Header.PayloadType}");
-
-                    _audioEndPoint.GotAudioRtp(
-                        rep, rtpPkt.Header.SyncSource, rtpPkt.Header.SequenceNumber,
-                        rtpPkt.Header.Timestamp, rtpPkt.Header.PayloadType,
-                        rtpPkt.Header.MarkerBit == 1, rtpPkt.Payload);
-                }
-            };
         }
 
         private List<string> GetValidLocalIPs()
