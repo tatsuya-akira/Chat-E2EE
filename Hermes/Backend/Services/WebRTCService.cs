@@ -49,8 +49,22 @@ namespace Hermes.Client.Services
             var audioTrack = new MediaStreamTrack(targetFormat, MediaStreamStatusEnum.SendRecv);
             _peerConnection.addTrack(audioTrack);
 
-            _audioEndPoint.SetAudioSinkFormat(targetFormat.First());
-            System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn: {targetFormat.First().FormatName}");
+            // BẮT BUỘC PHẢI CÓ 2 DÒNG NÀY ĐỂ TAI NGHE BLUETOOTH KHÔNG BỊ "NGÁO"
+            _audioEndPoint.SetAudioSourceFormat(targetFormat.First()); // Ép Mic 16kHz
+            _audioEndPoint.SetAudioSinkFormat(targetFormat.First());   // Ép Loa 16kHz
+
+            // TRẢ LẠI SỰ KIỆN NÀY ĐỂ WEBRTC HIỂU GÓI TIN SỐ 9 LÀ G722
+            _peerConnection.OnAudioFormatsNegotiated += (formats) =>
+            {
+                // Thay vì dùng ?? (không hỗ trợ cho struct), ta dùng Where và Count
+                var g722List = formats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
+                var selectedFormat = g722List.Count > 0 ? g722List.First() : formats.First();
+
+                _audioEndPoint.SetAudioSourceFormat(selectedFormat);
+                _audioEndPoint.SetAudioSinkFormat(selectedFormat);
+            };
+
+            System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn đồng bộ: {targetFormat.First().FormatName}");
 
             // ==========================================
             // THU MIC VÀ GỬI (ĐÃ CHỐNG CRASH)
