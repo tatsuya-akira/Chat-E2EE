@@ -39,23 +39,22 @@ namespace Hermes.Client.Services
             _peerConnection = new RTCPeerConnection(config);
             _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder());
 
+
             // ==========================================
-            // 🚀 CÚ CHỐT: ÉP ĐỒNG BỘ OPUS CHO CẢ MẠNG LẪN LOA
+            // 🚀 CÚ CHỐT: DÙNG G722 (16kHz) CHIỀU LÒNG BLUETOOTH
             // ==========================================
             var allFormats = _audioEndPoint.GetAudioSourceFormats();
 
-            // Tìm chuẩn OPUS (Concentus.dll bạn đã load thành công sẽ lo vụ này)
-            var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "OPUS").ToList();
-            if (targetFormat.Count == 0) // Dự phòng nếu máy xui xẻo không có OPUS
-                targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
+            // Ưu tiên G722 (16000 Hz). Nếu xui lắm không có thì mới lùi về PCMU
+            var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
+            if (targetFormat.Count == 0) targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
 
-            // 1. ÉP WEBRTC CHỈ ĐƯỢC TRUYỀN MẠNG BẰNG CHUẨN NÀY
             var audioTrack = new MediaStreamTrack(targetFormat, MediaStreamStatusEnum.SendRecv);
             _peerConnection.addTrack(audioTrack);
 
-            // 2. ÉP LOA GIẢI MÃ ĐÚNG CHUẨN NÀY (HẾT LỆCH PHA)
             _audioEndPoint.SetAudioSinkFormat(targetFormat.First());
-            System.Diagnostics.Debug.WriteLine($"🎧 [CHỐT HẠ] Mạng và Loa cùng đồng bộ chuẩn: {targetFormat.First().FormatName}");
+            System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn: {targetFormat.First().FormatName}");
+            // ==========================================
             // ==========================================
 
             _audioEndPoint.OnAudioSourceEncodedSample += (duration, payload) =>
