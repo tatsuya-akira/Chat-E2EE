@@ -44,8 +44,6 @@ namespace Hermes.Client.Services
             // 🚀 CÚ CHỐT: DÙNG G722 (16kHz) CHIỀU LÒNG BLUETOOTH
             // ==========================================
             var allFormats = _audioEndPoint.GetAudioSourceFormats();
-
-            // Ưu tiên G722 (16000 Hz). Nếu xui lắm không có thì mới lùi về PCMU
             var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
             if (targetFormat.Count == 0) targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
 
@@ -54,7 +52,6 @@ namespace Hermes.Client.Services
 
             _audioEndPoint.SetAudioSinkFormat(targetFormat.First());
             System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn: {targetFormat.First().FormatName}");
-            // ==========================================
             // ==========================================
 
             _audioEndPoint.OnAudioSourceEncodedSample += (duration, payload) =>
