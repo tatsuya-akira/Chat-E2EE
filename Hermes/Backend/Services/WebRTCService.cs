@@ -1,23 +1,26 @@
-﻿using SIPSorcery.Media;
+﻿using NAudio.Codecs;
+using NAudio.Wave;
 using SIPSorcery.Net;
-using SIPSorceryMedia.Windows;
+using SIPSorceryMedia.Abstractions;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Threading.Tasks;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
 
 namespace Hermes.Client.Services
 {
     public class WebRTCService
     {
         private RTCPeerConnection _peerConnection;
-        private WindowsAudioEndPoint _audioEndPoint;
+
+        // ==========================================
+        // VŨ KHÍ TỐI THƯỢNG: NAUDIO (KIỂM SOÁT PHẦN CỨNG)
+        // ==========================================
+        private WaveInEvent _waveIn;
+        private WaveOutEvent _waveOut;
+        private BufferedWaveProvider _waveProvider;
 
         public event Action<string> OnIceCandidateReady;
         public event Action<string> OnOfferReady;
@@ -26,6 +29,7 @@ namespace Hermes.Client.Services
 
         private List<RTCIceCandidateInit> _iceCandidateQueue = new List<RTCIceCandidateInit>();
         private bool _isRemoteDescriptionSet = false;
+
         public async Task InitializeCallAsync()
         {
             _isRemoteDescriptionSet = false;
@@ -37,56 +41,90 @@ namespace Hermes.Client.Services
 
             _peerConnection = new RTCPeerConnection(config);
 
-            // Khởi tạo bình thường, KHÔNG dùng WASAPI để tránh đụng độ Bluetooth
-            _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder());
+            // ==========================================
+            // 🚀 KHỞI TẠO NAUDIO (ÉP WINDOWS PHÁT TIẾNG)
+            // ==========================================
+            try
+            {
+                // 1. Khởi tạo Loa (Chuẩn 8kHz 16-bit)
+                _waveOut = new WaveOutEvent();
+                _waveProvider = new BufferedWaveProvider(new WaveFormat(8000, 16, 1))
+                {
+                    DiscardOnBufferOverflow = true // Chống nghẽn âm thanh
+                };
+                _waveOut.Init(_waveProvider);
+
+                // 2. Khởi tạo Mic (Chuẩn 8kHz 16-bit)
+                _waveIn = new WaveInEvent
+                {
+                    WaveFormat = new WaveFormat(8000, 16, 1),
+                    BufferMilliseconds = 20 // Cắt luồng mic đúng 20ms cho mỗi gói tin
+                };
+
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"❌ [LỖI NAUDIO] Không thể gọi phần cứng: {ex.Message}");
+            }
 
             // ==========================================
-            // 🚀 BƯỚC 1: QUAY VỀ PCMU (8kHz) CHUẨN QUỐC DÂN CHO BLUETOOTH
+            // 🚀 BÁO CHO WEBRTC BIẾT CHỈ DÙNG PCMU
             // ==========================================
-            var allFormats = _audioEndPoint.GetAudioSourceFormats();
-            var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
-
-            var selectedFormat = targetFormat.First();
-            var audioTrack = new MediaStreamTrack(targetFormat, MediaStreamStatusEnum.SendRecv);
+            var pcmuFormat = new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMU);
+            var audioTrack = new MediaStreamTrack(new List<AudioFormat> { pcmuFormat }, MediaStreamStatusEnum.SendRecv);
             _peerConnection.addTrack(audioTrack);
 
-            // CHỈ ép Loa nhận PCMU để không bị lệch pha.
-            // TUYỆT ĐỐI KHÔNG ép Mic, để thư viện tự gọi Mic ở 8kHz mặc định!
-            _audioEndPoint.SetAudioSinkFormat(selectedFormat);
-
-            System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn: {selectedFormat.FormatName} - Tương thích Bluetooth 100%");
-
-            // ==========================================
-            // 🎤 BƯỚC 2: THU MIC VÀ GỬI ĐI (Kèm ?. chống crash)
-            // ==========================================
-            _audioEndPoint.OnAudioSourceEncodedSample += (duration, payload) =>
+            _peerConnection.OnAudioFormatsNegotiated += (formats) =>
             {
-                bool isSilence = payload.All(b => b == 0 || b == 255);
-                if (!isSilence)
-                {
-                    System.Diagnostics.Debug.WriteLine($"🎤 [MIC ĐANG SỐNG] Gửi {payload.Length} bytes PCMU đi!");
-                }
-                _peerConnection?.SendAudio(duration, payload);
+                System.Diagnostics.Debug.WriteLine($"🎧 [WEBRTC] Đàm phán xong mạng! Tự quản lý Audio bằng NAudio.");
             };
 
             // ==========================================
-            // 🔊 BƯỚC 3: NHẬN MẠNG VÀ PHÁT LOA (Kèm ?. chống crash)
+            // 🎤 BẮT MIC BẰNG NAUDIO -> MÃ HÓA PCMU -> GỬI ĐI
             // ==========================================
-            _peerConnection.OnRtpPacketReceived += (System.Net.IPEndPoint rep, SDPMediaTypesEnum media, RTPPacket rtpPkt) =>
+            _waveIn.DataAvailable += (s, e) =>
+            {
+                // Chuyển âm thanh thô (PCM) thành chuẩn mạng PCMU (MuLaw)
+                byte[] encoded = new byte[e.BytesRecorded / 2];
+                int outIndex = 0;
+                for (int i = 0; i < e.BytesRecorded; i += 2)
+                {
+                    short sample = BitConverter.ToInt16(e.Buffer, i);
+                    encoded[outIndex++] = MuLawEncoder.LinearToMuLawSample(sample);
+                }
+
+                System.Diagnostics.Debug.WriteLine($"🎤 [NAUDIO MIC] Gửi {encoded.Length} bytes đi!");
+                _peerConnection?.SendAudio(20, encoded);
+            };
+
+            // ==========================================
+            // 🔊 NHẬN TỪ MẠNG -> GIẢI MÃ PCMU -> BƠM VÀO LOA NAUDIO
+            // ==========================================
+            _peerConnection.OnRtpPacketReceived += (IPEndPoint rep, SDPMediaTypesEnum media, RTPPacket rtpPkt) =>
             {
                 if (media == SDPMediaTypesEnum.audio)
                 {
-                    System.Diagnostics.Debug.WriteLine($"🔊 [MÁY NHẬN] Nhận {rtpPkt.Payload.Length} bytes | PayloadType: {rtpPkt.Header.PayloadType}");
+                    byte[] payload = rtpPkt.Payload;
 
-                    _audioEndPoint?.GotAudioRtp(
-                        rep, rtpPkt.Header.SyncSource, rtpPkt.Header.SequenceNumber,
-                        rtpPkt.Header.Timestamp, rtpPkt.Header.PayloadType,
-                        rtpPkt.Header.MarkerBit == 1, rtpPkt.Payload);
+                    // Giải mã từ chuẩn mạng PCMU (MuLaw) về âm thanh thô (PCM)
+                    byte[] decoded = new byte[payload.Length * 2];
+                    int outIndex = 0;
+                    for (int i = 0; i < payload.Length; i++)
+                    {
+                        short sample = MuLawDecoder.MuLawToLinearSample(payload[i]);
+                        byte[] sampleBytes = BitConverter.GetBytes(sample);
+                        decoded[outIndex++] = sampleBytes[0];
+                        decoded[outIndex++] = sampleBytes[1];
+                    }
+
+                    // Bơm trực tiếp vào màng loa (Không qua SIPSorcery)
+                    _waveProvider?.AddSamples(decoded, 0, decoded.Length);
+                    System.Diagnostics.Debug.WriteLine($"🔊 [NAUDIO LOA] Bơm {decoded.Length} bytes vào màng loa!");
                 }
             };
 
             // ==========================================
-            // BƯỚC 4: LỌC MẠNG TAILSCALE ĐỂ ĐI XUYÊN TƯỜNG
+            // LỌC MẠNG TAILSCALE
             // ==========================================
             var validIps = GetValidLocalIPs();
             _peerConnection.onicecandidate += (candidate) =>
@@ -109,30 +147,28 @@ namespace Hermes.Client.Services
 
             try
             {
-                await _audioEndPoint.StartAudio();
-                System.Diagnostics.Debug.WriteLine("✅ [TEST] Khởi động Micro/Loa thành công!");
+                // BẬT MIC VÀ LOA
+                _waveOut?.Play();
+                _waveIn?.StartRecording();
+                System.Diagnostics.Debug.WriteLine("✅ [NAUDIO] Khởi động Micro/Loa độc lập thành công!");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"❌ [LỖI NGHIÊM TRỌNG] Không thể bật Micro/Loa: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"❌ [LỖI NGHIÊM TRỌNG] Không bật được Micro/Loa: {ex.Message}");
             }
         }
 
         private List<string> GetValidLocalIPs()
         {
             List<string> validIps = new List<string>();
-
-            // Quét toàn bộ card mạng trên máy tính
             foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
             {
-                // Bỏ qua các card đang tắt hoặc card Loopback (127.0.0.1)
                 if (ni.OperationalStatus != OperationalStatus.Up) continue;
                 if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
 
                 string desc = ni.Description.ToLower();
                 string name = ni.Name.ToLower();
 
-                // LỌC THÔNG MINH: Bỏ qua các mạng sinh ra do máy ảo, giữ lại Tailscale và mạng thật
                 if (desc.Contains("wsl") || name.Contains("wsl") ||
                     desc.Contains("vmware") || name.Contains("vmware") ||
                     desc.Contains("virtualbox") || desc.Contains("hyper-v"))
@@ -140,11 +176,9 @@ namespace Hermes.Client.Services
                     continue;
                 }
 
-                // Lấy các IP của card mạng hợp lệ
                 foreach (var ipProps in ni.GetIPProperties().UnicastAddresses)
                 {
-                    // Ưu tiên lấy IPv4 (Tailscale và WiFi/LAN dùng IPv4 là ổn định nhất cho WebRTC P2P)
-                    if (ipProps.Address.AddressFamily == AddressFamily.InterNetwork)
+                    if (ipProps.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
                     {
                         validIps.Add(ipProps.Address.ToString());
                     }
@@ -167,7 +201,6 @@ namespace Hermes.Client.Services
                 _peerConnection.setRemoteDescription(offer);
                 _isRemoteDescriptionSet = true;
 
-                // Bơm toàn bộ IP đang xếp hàng chờ vào
                 foreach (var c in _iceCandidateQueue) _peerConnection.addIceCandidate(c);
                 _iceCandidateQueue.Clear();
 
@@ -209,10 +242,19 @@ namespace Hermes.Client.Services
             _iceCandidateQueue.Clear();
             _isRemoteDescriptionSet = false;
 
-            if (_audioEndPoint != null)
+            // TẮT NAUDIO SẠCH SẼ CHỐNG CRASH
+            if (_waveIn != null)
             {
-                await _audioEndPoint.CloseAudio();
-                _audioEndPoint = null;
+                _waveIn.StopRecording();
+                _waveIn.Dispose();
+                _waveIn = null;
+            }
+
+            if (_waveOut != null)
+            {
+                _waveOut.Stop();
+                _waveOut.Dispose();
+                _waveOut = null;
             }
 
             if (_peerConnection != null)
@@ -220,6 +262,7 @@ namespace Hermes.Client.Services
                 _peerConnection.Close("Call ended");
                 _peerConnection = null;
             }
+            await Task.CompletedTask;
         }
     }
 }
