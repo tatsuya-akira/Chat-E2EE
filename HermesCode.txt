@@ -751,7 +751,6 @@ namespace Hermes.Client.Services
 
         private List<RTCIceCandidateInit> _iceCandidateQueue = new List<RTCIceCandidateInit>();
         private bool _isRemoteDescriptionSet = false;
-
         public async Task InitializeCallAsync()
         {
             _isRemoteDescriptionSet = false;
@@ -762,10 +761,10 @@ namespace Hermes.Client.Services
             };
 
             _peerConnection = new RTCPeerConnection(config);
+
             // ==========================================
-            // 🚀 BƯỚC 1: DÙNG WASAPI THAY VÌ WAVEOUT CỦA WINDOWS (CÚ CHỐT)
+            // 🚀 BƯỚC 1: BẬT LÕI WASAPI (CHỮ TRUE THẦN THÁNH)
             // ==========================================
-            // Chữ 'true' ở cuối cực kỳ quan trọng, nó ép Windows 11 phải cho phép phát âm thanh!
             _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder(), -1, -1, true);
 
             // ==========================================
@@ -780,11 +779,9 @@ namespace Hermes.Client.Services
             var audioTrack = new MediaStreamTrack(targetFormat, MediaStreamStatusEnum.SendRecv);
             _peerConnection.addTrack(audioTrack);
 
-            // Ép phần cứng: Mic thu 16kHz, Loa phát 16kHz (Bluetooth mới không bị ngáo)
             _audioEndPoint.SetAudioSourceFormat(selectedFormat);
             _audioEndPoint.SetAudioSinkFormat(selectedFormat);
 
-            // Xử lý đàm phán an toàn tuyệt đối (Đã fix lỗi dấu ??)
             _peerConnection.OnAudioFormatsNegotiated += (formats) =>
             {
                 var g722List = formats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
@@ -793,15 +790,10 @@ namespace Hermes.Client.Services
                 _audioEndPoint.SetAudioSinkFormat(finalFormat);
             };
 
-            // ==========================================
-            // 🚀 BƯỚC 3: TRẠM KIỂM ĐỊNH LÕI GIẢI MÃ
-            // ==========================================
-            // Hàm này chỉ chạy khi bộ giải mã SIPSorcery đã dịch thành công gói tin 80 bytes thành âm thanh thực
-
             System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn đồng bộ: {selectedFormat.FormatName} (WASAPI)");
 
             // ==========================================
-            // THU MIC VÀ GỬI (ĐÃ CHỐNG CRASH)
+            // 🎤 BƯỚC 3: THU MIC VÀ GỬI ĐI (ĐÃ KHÔI PHỤC)
             // ==========================================
             _audioEndPoint.OnAudioSourceEncodedSample += (duration, payload) =>
             {
@@ -810,13 +802,11 @@ namespace Hermes.Client.Services
                 {
                     System.Diagnostics.Debug.WriteLine($"🎤 [MIC ĐANG SỐNG] Gửi {payload.Length} bytes âm thanh THẬT đi!");
                 }
-
-                // Dùng ?. để nếu cúp máy ngang, _peerConnection bị null thì không văng lỗi
                 _peerConnection?.SendAudio(duration, payload);
             };
 
             // ==========================================
-            // NHẬN TỪ MẠNG VÀ PHÁT LOA (GỘP LÀM 1 LẦN DUY NHẤT)
+            // 🔊 BƯỚC 4: NHẬN MẠNG VÀ PHÁT LOA (ĐÃ KHÔI PHỤC)
             // ==========================================
             _peerConnection.OnRtpPacketReceived += (System.Net.IPEndPoint rep, SDPMediaTypesEnum media, RTPPacket rtpPkt) =>
             {
@@ -824,7 +814,6 @@ namespace Hermes.Client.Services
                 {
                     System.Diagnostics.Debug.WriteLine($"🔊 [MÁY NHẬN] Nhận {rtpPkt.Payload.Length} bytes | PayloadType: {rtpPkt.Header.PayloadType}");
 
-                    // Dùng ?. chống crash
                     _audioEndPoint?.GotAudioRtp(
                         rep, rtpPkt.Header.SyncSource, rtpPkt.Header.SequenceNumber,
                         rtpPkt.Header.Timestamp, rtpPkt.Header.PayloadType,
@@ -833,7 +822,7 @@ namespace Hermes.Client.Services
             };
 
             // ==========================================
-            // BỘ LỌC MẠNG TAILSCALE
+            // BƯỚC 5: LỌC MẠNG TAILSCALE
             // ==========================================
             var validIps = GetValidLocalIPs();
             _peerConnection.onicecandidate += (candidate) =>

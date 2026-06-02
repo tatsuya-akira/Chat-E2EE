@@ -37,51 +37,40 @@ namespace Hermes.Client.Services
 
             _peerConnection = new RTCPeerConnection(config);
 
-            // ==========================================
-            // 🚀 BƯỚC 1: BẬT LÕI WASAPI (CHỮ TRUE THẦN THÁNH)
-            // ==========================================
-            _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder(), -1, -1, true);
+            // Khởi tạo bình thường, KHÔNG dùng WASAPI để tránh đụng độ Bluetooth
+            _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder());
 
             // ==========================================
-            // 🚀 BƯỚC 2: CODEC G722 & ĐỒNG BỘ TUYỆT ĐỐI MIC VÀ LOA
+            // 🚀 BƯỚC 1: QUAY VỀ PCMU (8kHz) CHUẨN QUỐC DÂN CHO BLUETOOTH
             // ==========================================
             var allFormats = _audioEndPoint.GetAudioSourceFormats();
-            var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
-            if (targetFormat.Count == 0) targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
+            var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
 
             var selectedFormat = targetFormat.First();
-
             var audioTrack = new MediaStreamTrack(targetFormat, MediaStreamStatusEnum.SendRecv);
             _peerConnection.addTrack(audioTrack);
 
-            _audioEndPoint.SetAudioSourceFormat(selectedFormat);
+            // CHỈ ép Loa nhận PCMU để không bị lệch pha.
+            // TUYỆT ĐỐI KHÔNG ép Mic, để thư viện tự gọi Mic ở 8kHz mặc định!
             _audioEndPoint.SetAudioSinkFormat(selectedFormat);
 
-            _peerConnection.OnAudioFormatsNegotiated += (formats) =>
-            {
-                var g722List = formats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
-                var finalFormat = g722List.Count > 0 ? g722List.First() : formats.First();
-                _audioEndPoint.SetAudioSourceFormat(finalFormat);
-                _audioEndPoint.SetAudioSinkFormat(finalFormat);
-            };
-
-            System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn đồng bộ: {selectedFormat.FormatName} (WASAPI)");
+            System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn: {selectedFormat.FormatName} - Tương thích Bluetooth 100%");
 
             // ==========================================
-            // 🎤 BƯỚC 3: THU MIC VÀ GỬI ĐI (ĐÃ KHÔI PHỤC)
+            // 🎤 BƯỚC 2: THU MIC VÀ GỬI ĐI (Kèm ?. chống crash)
             // ==========================================
             _audioEndPoint.OnAudioSourceEncodedSample += (duration, payload) =>
             {
                 bool isSilence = payload.All(b => b == 0 || b == 255);
                 if (!isSilence)
                 {
-                    System.Diagnostics.Debug.WriteLine($"🎤 [MIC ĐANG SỐNG] Gửi {payload.Length} bytes âm thanh THẬT đi!");
+                    System.Diagnostics.Debug.WriteLine($"🎤 [MIC ĐANG SỐNG] Gửi {payload.Length} bytes PCMU đi!");
                 }
                 _peerConnection?.SendAudio(duration, payload);
             };
 
             // ==========================================
-            // 🔊 BƯỚC 4: NHẬN MẠNG VÀ PHÁT LOA (ĐÃ KHÔI PHỤC)
+            // 🔊 BƯỚC 3: NHẬN MẠNG VÀ PHÁT LOA (Kèm ?. chống crash)
             // ==========================================
             _peerConnection.OnRtpPacketReceived += (System.Net.IPEndPoint rep, SDPMediaTypesEnum media, RTPPacket rtpPkt) =>
             {
@@ -97,7 +86,7 @@ namespace Hermes.Client.Services
             };
 
             // ==========================================
-            // BƯỚC 5: LỌC MẠNG TAILSCALE
+            // BƯỚC 4: LỌC MẠNG TAILSCALE ĐỂ ĐI XUYÊN TƯỜNG
             // ==========================================
             var validIps = GetValidLocalIPs();
             _peerConnection.onicecandidate += (candidate) =>
