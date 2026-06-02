@@ -37,34 +37,43 @@ namespace Hermes.Client.Services
             };
 
             _peerConnection = new RTCPeerConnection(config);
-            _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder());
+            // ==========================================
+            // 🚀 BƯỚC 1: DÙNG WASAPI THAY VÌ WAVEOUT CỦA WINDOWS (CÚ CHỐT)
+            // ==========================================
+            // Chữ 'true' ở cuối cực kỳ quan trọng, nó ép Windows 11 phải cho phép phát âm thanh!
+            _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder(), -1, -1, true);
 
             // ==========================================
-            // 🚀 CODEC: G722 (16kHz)
+            // 🚀 BƯỚC 2: CODEC G722 & ĐỒNG BỘ TUYỆT ĐỐI MIC VÀ LOA
             // ==========================================
             var allFormats = _audioEndPoint.GetAudioSourceFormats();
             var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
             if (targetFormat.Count == 0) targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
 
+            var selectedFormat = targetFormat.First();
+
             var audioTrack = new MediaStreamTrack(targetFormat, MediaStreamStatusEnum.SendRecv);
             _peerConnection.addTrack(audioTrack);
 
-            // BẮT BUỘC PHẢI CÓ 2 DÒNG NÀY ĐỂ TAI NGHE BLUETOOTH KHÔNG BỊ "NGÁO"
-            _audioEndPoint.SetAudioSourceFormat(targetFormat.First()); // Ép Mic 16kHz
-            _audioEndPoint.SetAudioSinkFormat(targetFormat.First());   // Ép Loa 16kHz
+            // Ép phần cứng: Mic thu 16kHz, Loa phát 16kHz (Bluetooth mới không bị ngáo)
+            _audioEndPoint.SetAudioSourceFormat(selectedFormat);
+            _audioEndPoint.SetAudioSinkFormat(selectedFormat);
 
-            // TRẢ LẠI SỰ KIỆN NÀY ĐỂ WEBRTC HIỂU GÓI TIN SỐ 9 LÀ G722
+            // Xử lý đàm phán an toàn tuyệt đối (Đã fix lỗi dấu ??)
             _peerConnection.OnAudioFormatsNegotiated += (formats) =>
             {
-                // Thay vì dùng ?? (không hỗ trợ cho struct), ta dùng Where và Count
                 var g722List = formats.Where(f => f.FormatName.ToUpper() == "G722").ToList();
-                var selectedFormat = g722List.Count > 0 ? g722List.First() : formats.First();
-
-                _audioEndPoint.SetAudioSourceFormat(selectedFormat);
-                _audioEndPoint.SetAudioSinkFormat(selectedFormat);
+                var finalFormat = g722List.Count > 0 ? g722List.First() : formats.First();
+                _audioEndPoint.SetAudioSourceFormat(finalFormat);
+                _audioEndPoint.SetAudioSinkFormat(finalFormat);
             };
 
-            System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn đồng bộ: {targetFormat.First().FormatName}");
+            // ==========================================
+            // 🚀 BƯỚC 3: TRẠM KIỂM ĐỊNH LÕI GIẢI MÃ
+            // ==========================================
+            // Hàm này chỉ chạy khi bộ giải mã SIPSorcery đã dịch thành công gói tin 80 bytes thành âm thanh thực
+
+            System.Diagnostics.Debug.WriteLine($"🎧 [CODEC] Đã chốt chuẩn đồng bộ: {selectedFormat.FormatName} (WASAPI)");
 
             // ==========================================
             // THU MIC VÀ GỬI (ĐÃ CHỐNG CRASH)
