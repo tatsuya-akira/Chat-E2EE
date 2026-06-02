@@ -11,7 +11,10 @@ namespace Hermes.Backend.Services
         public event Action<string, string, Dictionary<string, string>> OnReceiveMessage;
         public event Action<string, string, int> OnIncomingCall;
         public event Action OnNewChatNotification;
-        // Thêm Event báo trạng thái Online/Offline
+        public event Action<string, string> OnReceiveWebRTCOffer; // Nhận lời mời (Kèm ID người gọi)
+        public event Action<string> OnReceiveWebRTCAnswer;        // Nhận phản hồi
+        public event Action<string> OnReceiveIceCandidate;        // Nhận IP mặt tiền
+        public event Action OnCallEnded;                          // Cúp máy
         public event Action<string, bool> OnUserStatusChanged;
 
         public SignalRService(string hubUrl)
@@ -41,6 +44,10 @@ namespace Hermes.Backend.Services
             {
                 OnNewChatNotification?.Invoke();
             });
+            _connection.On<string, string>("ReceiveWebRTCOffer", (callerId, offer) => OnReceiveWebRTCOffer?.Invoke(callerId, offer));
+            _connection.On<string>("ReceiveWebRTCAnswer", (answer) => OnReceiveWebRTCAnswer?.Invoke(answer));
+            _connection.On<string>("ReceiveIceCandidate", (candidate) => OnReceiveIceCandidate?.Invoke(candidate));
+            _connection.On("CallEnded", () => OnCallEnded?.Invoke());
         }
 
         public async Task ConnectAsync(string userId)
@@ -101,5 +108,9 @@ namespace Hermes.Backend.Services
                 await _connection.InvokeAsync("NotifyNewChat", participantIds);
             }
         }
+        public async Task SendWebRTCOfferAsync(string targetId, string offer) => await _connection.InvokeAsync("SendWebRTCOffer", targetId, offer);
+        public async Task SendWebRTCAnswerAsync(string targetId, string answer) => await _connection.InvokeAsync("SendWebRTCAnswer", targetId, answer);
+        public async Task SendIceCandidateAsync(string targetId, string candidate) => await _connection.InvokeAsync("SendIceCandidate", targetId, candidate);
+        public async Task EndCallAsync(string targetId) => await _connection.InvokeAsync("EndCall", targetId);
     }
 }

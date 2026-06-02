@@ -19,7 +19,7 @@ namespace Hermes.Backend.Services
         {
             _httpClient = new HttpClient();
             // TODO: Load from AppSettings or .env
-            _httpClient.BaseAddress = new Uri("http://localhost:5042/api/");
+            _httpClient.BaseAddress = new Uri("http://100.67.94.18:5042/api/");
         }
 
         public static async Task<bool> CheckIdentifierExistsAsync(string identifier)
@@ -617,7 +617,10 @@ namespace Hermes.Backend.Services
         public event Action<string, string, Dictionary<string, string>> OnReceiveMessage;
         public event Action<string, string, int> OnIncomingCall;
         public event Action OnNewChatNotification;
-        // ThÃªm Event bÃ¡o tráº¡ng thÃ¡i Online/Offline
+        public event Action<string, string> OnReceiveWebRTCOffer; // Nháº­n lá»i má»i (KÃ¨m ID ngÆ°á»i gá»i)
+        public event Action<string> OnReceiveWebRTCAnswer;        // Nháº­n pháº£n há»“i
+        public event Action<string> OnReceiveIceCandidate;        // Nháº­n IP máº·t tiá»n
+        public event Action OnCallEnded;                          // CÃºp mÃ¡y
         public event Action<string, bool> OnUserStatusChanged;
 
         public SignalRService(string hubUrl)
@@ -647,6 +650,10 @@ namespace Hermes.Backend.Services
             {
                 OnNewChatNotification?.Invoke();
             });
+            _connection.On<string, string>("ReceiveWebRTCOffer", (callerId, offer) => OnReceiveWebRTCOffer?.Invoke(callerId, offer));
+            _connection.On<string>("ReceiveWebRTCAnswer", (answer) => OnReceiveWebRTCAnswer?.Invoke(answer));
+            _connection.On<string>("ReceiveIceCandidate", (candidate) => OnReceiveIceCandidate?.Invoke(candidate));
+            _connection.On("CallEnded", () => OnCallEnded?.Invoke());
         }
 
         public async Task ConnectAsync(string userId)
@@ -707,131 +714,195 @@ namespace Hermes.Backend.Services
                 await _connection.InvokeAsync("NotifyNewChat", participantIds);
             }
         }
+        public async Task SendWebRTCOfferAsync(string targetId, string offer) => await _connection.InvokeAsync("SendWebRTCOffer", targetId, offer);
+        public async Task SendWebRTCAnswerAsync(string targetId, string answer) => await _connection.InvokeAsync("SendWebRTCAnswer", targetId, answer);
+        public async Task SendIceCandidateAsync(string targetId, string candidate) => await _connection.InvokeAsync("SendIceCandidate", targetId, candidate);
+        public async Task EndCallAsync(string targetId) => await _connection.InvokeAsync("EndCall", targetId);
     }
 }
 
---- FILE: VoiceService.cs ---
+--- FILE: WebRTCService.cs ---
 
+using SIPSorcery.Net;
+using SIPSorceryMedia.Windows;
+using SIPSorcery.Media;
 using System;
-using System.Net;
-using System.Net.Sockets;
-using System.Threading;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
-using NAudio.Wave;
+using System.Net;
+using System.Diagnostics;
 
-namespace Hermes.Backend.Services
+namespace Hermes.Client.Services
 {
-    public class VoiceService : IDisposable
+    public class WebRTCService
     {
-        private UdpClient _udpClient;
-        private WaveInEvent _waveIn;
-        private WaveOutEvent _waveOut;
-        private BufferedWaveProvider _waveProvider;
-        private IPEndPoint _remoteEndPoint;
-        private CancellationTokenSource _cts;
+        private RTCPeerConnection _peerConnection;
+        private WindowsAudioEndPoint _audioEndPoint;
 
-        public event Action<string> OnError;
+        public event Action<string> OnIceCandidateReady;
+        public event Action<string> OnOfferReady;
+        public event Action<string> OnAnswerReady;
+        public event Action<string> OnCallStateChanged;
 
-        public async Task<(string PublicIp, int PublicPort)> GetPublicEndPointFromStunAsync()
+        private List<RTCIceCandidateInit> _iceCandidateQueue = new List<RTCIceCandidateInit>();
+        private bool _isRemoteDescriptionSet = false;
+
+        public async Task InitializeCallAsync()
         {
-            await Task.Delay(100);
-            return ("127.0.0.1", 50000); 
-        }
+            _isRemoteDescriptionSet = false;
+            // KHÔNG clear queue ở đây! Giữ nguyên các IP dự phòng.
 
-        public void InitializeCall(string remoteIp, int remotePort)
-        {
-            _remoteEndPoint = new IPEndPoint(IPAddress.Parse(remoteIp), remotePort);
-            _udpClient = new UdpClient(0); // Bind to any available local port
-            _cts = new CancellationTokenSource();
-
-            // Hole Punching
-            HolePunchAsync().ConfigureAwait(false);
-
-            // Audio setup
-            _waveIn = new WaveInEvent
+            var config = new RTCConfiguration
             {
-                WaveFormat = new WaveFormat(16000, 16, 1) // 16kHz, 16-bit, Mono as per CONTEXT.md
+                iceServers = new List<RTCIceServer> { new RTCIceServer { urls = "stun:stun.l.google.com:19302" } }
             };
-            _waveIn.DataAvailable += WaveIn_DataAvailable;
 
-            _waveProvider = new BufferedWaveProvider(_waveIn.WaveFormat);
-            _waveOut = new WaveOutEvent();
-            _waveOut.Init(_waveProvider);
-        }
+            _peerConnection = new RTCPeerConnection(config);
 
-        private async Task HolePunchAsync()
-        {
+            _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder());
+            var audioTrack = new MediaStreamTrack(_audioEndPoint.GetAudioSourceFormats(), MediaStreamStatusEnum.SendRecv);
+            _peerConnection.addTrack(audioTrack);
+
+            // ==========================================
+            // FIX CODEC: CHỐT CHUẨN ÂM THANH NGAY TỪ ĐẦU
+            // Ưu tiên OPUS (rất mượt), nếu không có thì xuống PCMU, bí quá thì lấy cái đầu tiên
+            // ==========================================
+            var formats = _audioEndPoint.GetAudioSourceFormats();
+            var fallbackFormat = formats.First();
+
+            var opusFormats = formats.Where(f => f.FormatName.ToUpper() == "OPUS").ToList();
+            var pcmuFormats = formats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
+
+            if (opusFormats.Count > 0) fallbackFormat = opusFormats.First();
+            else if (pcmuFormats.Count > 0) fallbackFormat = pcmuFormats.First();
+
+            _audioEndPoint.SetAudioSinkFormat(fallbackFormat);
+            Debug.WriteLine($"🎧 [FIXED] Đã ép Loa dùng chuẩn: {fallbackFormat.FormatName}");
+
+            // ==========================================
+            // THU ÂM TỪ MIC VÀ PHÁT QUA MẠNG
+            // ==========================================
+            _audioEndPoint.OnAudioSourceEncodedSample += (duration, payload) =>
+            {
+                bool isSilence = payload.All(b => b == 0 || b == 255);
+                if (!isSilence)
+                {
+                    // Tạm ẩn log để đỡ giật màn hình, nếu muốn dò mic thì mở lên
+                    // Debug.WriteLine($"🎤 [MIC ĐANG SỐNG] Gửi {payload.Length} bytes âm thanh THẬT đi!");
+                }
+                else
+                {
+                    Debug.WriteLine("⚠️ [CẢNH BÁO] Mic đang gửi đi sự im lặng tuyệt đối (Lỗi Mic hoặc bị Windows chặn)!");
+                }
+
+                _peerConnection.SendAudio(duration, payload);
+            };
+
+            // ==========================================
+            // NHẬN ÂM THANH TỪ MẠNG ĐỔ RA LOA
+            // ==========================================
+            _peerConnection.OnRtpPacketReceived += (System.Net.IPEndPoint rep, SDPMediaTypesEnum media, RTPPacket rtpPkt) =>
+            {
+                if (media == SDPMediaTypesEnum.audio)
+                {
+                    // Tạm ẩn log
+                    // Debug.WriteLine("🔊 [TEST] Đã nhận được âm thanh từ mạng!"); 
+                    _audioEndPoint.GotAudioRtp(
+                        rep, rtpPkt.Header.SyncSource, rtpPkt.Header.SequenceNumber,
+                        rtpPkt.Header.Timestamp, rtpPkt.Header.PayloadType,
+                        rtpPkt.Header.MarkerBit == 1, rtpPkt.Payload);
+                }
+            };
+
+            _peerConnection.onicecandidate += (candidate) => OnIceCandidateReady?.Invoke(candidate.toJSON());
+
+            // XÓA OnAudioFormatsNegotiated ĐỂ TRÁNH LỖI XUNG ĐỘT GHI ĐÈ
+
+            _peerConnection.onconnectionstatechange += (state) =>
+            {
+                Console.WriteLine($"Trạng thái WebRTC: {state}");
+                OnCallStateChanged?.Invoke(state.ToString());
+            };
+
             try
             {
-                byte[] dummyPacket = new byte[] { 0x00 };
-                for (int i = 0; i < 3; i++)
-                {
-                    await _udpClient.SendAsync(dummyPacket, dummyPacket.Length, _remoteEndPoint);
-                    await Task.Delay(100);
-                }
+                await _audioEndPoint.StartAudio();
+                Debug.WriteLine("✅ [TEST] Khởi động Micro/Loa thành công!");
             }
             catch (Exception ex)
             {
-                OnError?.Invoke($"Hole Punching error: {ex.Message}");
+                Debug.WriteLine($"❌ [LỖI NGHIÊM TRỌNG] Không thể bật Micro/Loa: {ex.Message}");
             }
         }
 
-        public void StartCall()
+        public async Task CreateOfferAsync()
         {
-            _waveIn?.StartRecording();
-            _waveOut?.Play();
-            Task.Run(() => ReceiveAudioLoop(_cts.Token));
+            var offer = _peerConnection.createOffer();
+            await _peerConnection.setLocalDescription(offer);
+            OnOfferReady?.Invoke(offer.toJSON());
         }
 
-        public void EndCall()
+        public async Task ReceiveOfferAndCreateAnswerAsync(string offerJson)
         {
-            _cts?.Cancel();
-            _waveIn?.StopRecording();
-            _waveOut?.Stop();
-        }
-
-        private async void WaveIn_DataAvailable(object sender, WaveInEventArgs e)
-        {
-            try
+            if (RTCSessionDescriptionInit.TryParse(offerJson, out var offer))
             {
-                if (_udpClient != null && _remoteEndPoint != null)
+                _peerConnection.setRemoteDescription(offer);
+                _isRemoteDescriptionSet = true;
+
+                // Bơm toàn bộ IP đang xếp hàng chờ vào
+                foreach (var c in _iceCandidateQueue) _peerConnection.addIceCandidate(c);
+                _iceCandidateQueue.Clear();
+
+                var answer = _peerConnection.createAnswer();
+                await _peerConnection.setLocalDescription(answer);
+                OnAnswerReady?.Invoke(answer.toJSON());
+            }
+        }
+
+        public void ReceiveAnswer(string answerJson)
+        {
+            if (RTCSessionDescriptionInit.TryParse(answerJson, out var answer))
+            {
+                _peerConnection.setRemoteDescription(answer);
+                _isRemoteDescriptionSet = true;
+
+                foreach (var c in _iceCandidateQueue) _peerConnection.addIceCandidate(c);
+                _iceCandidateQueue.Clear();
+            }
+        }
+
+        public void AddIceCandidate(string candidateJson)
+        {
+            if (RTCIceCandidateInit.TryParse(candidateJson, out var candidate))
+            {
+                if (_peerConnection != null && _isRemoteDescriptionSet)
                 {
-                    await _udpClient.SendAsync(e.Buffer, e.BytesRecorded, _remoteEndPoint);
+                    _peerConnection.addIceCandidate(candidate);
+                }
+                else
+                {
+                    _iceCandidateQueue.Add(candidate);
                 }
             }
-            catch (Exception ex)
-            {
-                OnError?.Invoke($"Send audio error: {ex.Message}");
-            }
         }
 
-        private async Task ReceiveAudioLoop(CancellationToken token)
+        public async Task CloseCallAsync()
         {
-            try
-            {
-                while (!token.IsCancellationRequested)
-                {
-                    var result = await _udpClient.ReceiveAsync(token);
-                    if (result.Buffer.Length > 1) // ignore dummy hole punch packets
-                    {
-                        _waveProvider?.AddSamples(result.Buffer, 0, result.Buffer.Length);
-                    }
-                }
-            }
-            catch (OperationCanceledException) { /* Call Ended */ }
-            catch (Exception ex)
-            {
-                OnError?.Invoke($"Receive audio error: {ex.Message}");
-            }
-        }
+            _iceCandidateQueue.Clear();
+            _isRemoteDescriptionSet = false;
 
-        public void Dispose()
-        {
-            EndCall();
-            _waveIn?.Dispose();
-            _waveOut?.Dispose();
-            _udpClient?.Dispose();
-            _cts?.Dispose();
+            if (_audioEndPoint != null)
+            {
+                await _audioEndPoint.CloseAudio();
+                _audioEndPoint = null;
+            }
+
+            if (_peerConnection != null)
+            {
+                _peerConnection.Close("Call ended");
+                _peerConnection = null;
+            }
         }
     }
 }
@@ -843,7 +914,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
 
-namespace Hermes.Converters
+namespace Hermes.UI.Converters
 {
     public class BooleanToVisibilityInverseConverter : IValueConverter
     {
@@ -868,7 +939,7 @@ namespace Hermes.Converters
 <Window x:Class="Hermes.ChatWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:conv="clr-namespace:Hermes.Converters"
+        xmlns:conv="clr-namespace:Hermes.UI.Converters"
         Title="Hermes - Tin nhắn được bảo mật đầu cuối" Height="650" Width="1000"
         WindowStartupLocation="CenterScreen" Background="#F9FAFB">
 
@@ -1029,7 +1100,9 @@ namespace Hermes.Converters
 
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <Button Content="🔒 Mã hóa E2EE" Background="Transparent" BorderThickness="0" Foreground="#10B981" Margin="0,0,20,0" FontSize="13" FontStyle="Italic"/>
-                            <Button Content="📞" Background="Transparent" BorderThickness="0" FontSize="20" Margin="0,0,15,0" Cursor="Hand"/>
+
+                            <Button x:Name="btnCall" Click="btnCall_Click" Content="📞" Background="Transparent" BorderThickness="0" FontSize="20" Margin="0,0,15,0" Cursor="Hand" ToolTip="Gọi thoại WebRTC"/>
+
                             <Button Content="📹" Background="Transparent" BorderThickness="0" FontSize="20" Margin="0,0,15,0" Cursor="Hand"/>
                             <Button Content="⋮" Background="Transparent" BorderThickness="0" FontSize="24" Cursor="Hand"/>
                         </StackPanel>
@@ -1100,6 +1173,35 @@ namespace Hermes.Converters
                 </Border>
             </Grid>
         </Grid>
+
+        <Grid x:Name="CallPopup" Visibility="Collapsed" Background="#CC000000" Panel.ZIndex="100" Grid.ColumnSpan="2">
+            <Border Background="White" Width="320" Height="160" CornerRadius="12" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock x:Name="txtCallStatus" Text="Có cuộc gọi đến..." FontSize="18" FontWeight="Bold" Foreground="#1F2937" HorizontalAlignment="Center" Margin="0,0,0,25"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button x:Name="btnAcceptCall" Content="✅ Nghe" Width="100" Height="40" Background="#10B981" Foreground="White" FontWeight="Bold" Click="btnAcceptCall_Click" Margin="0,0,20,0" Cursor="Hand">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="20">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                        <Button x:Name="btnRejectCall" Content="❌ Từ chối" Width="100" Height="40" Background="#EF4444" Foreground="White" FontWeight="Bold" Click="btnRejectCall_Click" Cursor="Hand">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="20">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
     </Grid>
 </Window>
 
@@ -1114,6 +1216,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Collections.Generic;
+using Hermes.Client.Services;
 
 namespace Hermes
 {
@@ -1121,7 +1224,11 @@ namespace Hermes
     {
         public ObservableCollection<ChatModel> Chats { get; set; }
         private SignalRService _signalRService;
-
+        private WebRTCService _webRTCService;
+        private string _currentCallTargetId; // Lưu ID người mình đang gọi
+        private string _incomingOffer;       // Lưu Lời mời khi người khác gọi tới
+        private bool _isInCall = false;
+        private bool _isRinging = false;
         public ChatWindow()
         {
             InitializeComponent();
@@ -1129,7 +1236,7 @@ namespace Hermes
             lstChats.ItemsSource = Chats;
 
             // 1. Khởi tạo SignalR
-            _signalRService = new SignalRService("http://localhost:5042/chathub");
+            _signalRService = new SignalRService("http://100.67.94.18:5042/chathub");
 
             // 2. Lắng nghe sự kiện nhắn tin tới
             _signalRService.OnReceiveMessage += SignalR_OnReceiveMessage;
@@ -1153,8 +1260,90 @@ namespace Hermes
                     LoadRealChatsAsync();
                 });
             };
-        }
+            _webRTCService = new Hermes.Client.Services.WebRTCService();
 
+            // Khi WebRTC tạo xong tín hiệu, đẩy nó qua SignalR
+            _webRTCService.OnOfferReady += async (offer) => await _signalRService.SendWebRTCOfferAsync(_currentCallTargetId, offer);
+            _webRTCService.OnAnswerReady += async (answer) => await _signalRService.SendWebRTCAnswerAsync(_currentCallTargetId, answer);
+            _webRTCService.OnIceCandidateReady += async (candidate) => await _signalRService.SendIceCandidateAsync(_currentCallTargetId, candidate);
+
+            // --- LẮNG NGHE TÍN HIỆU TỪ NGƯỜI KHÁC ---
+            _signalRService.OnReceiveWebRTCOffer += (callerId, offer) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    // Chốt chặn: Đang gọi mà có người khác gọi tới thì bỏ qua
+                    if (_isInCall || _isRinging) return;
+
+                    _isRinging = true;
+                    _currentCallTargetId = callerId; 
+                    _incomingOffer = offer;          
+                    
+                    txtCallStatus.Text = "Ai đó đang gọi bạn...";
+                    
+                    // Reset lại giao diện chuẩn
+                    btnAcceptCall.Visibility = Visibility.Visible; 
+                    btnRejectCall.Content = "❌ Từ chối";
+                    CallPopup.Visibility = Visibility.Visible; 
+                });
+            };
+
+            _signalRService.OnReceiveWebRTCAnswer += (answer) =>
+                Dispatcher.Invoke(() => _webRTCService.ReceiveAnswer(answer));
+
+            _signalRService.OnReceiveIceCandidate += (candidate) =>
+                Dispatcher.Invoke(() => _webRTCService.AddIceCandidate(candidate));
+
+            // KHI ĐỐI PHƯƠNG CÚP MÁY HOẶC TỪ CHỐI
+            _signalRService.OnCallEnded += () =>
+            {
+                Dispatcher.Invoke(async () =>
+                {
+                    await HandleEndCallLogic();
+                    MessageBox.Show("Cuộc gọi đã kết thúc.");
+                });
+            };
+
+            // KHI TRẠNG THÁI WEBRTC THAY ĐỔI
+            _webRTCService.OnCallStateChanged += (state) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (state.ToLower() == "connected")
+                    {
+                        _isInCall = true; // Đánh dấu đã kết nối
+                        _isRinging = false;
+                        txtCallStatus.Text = "Đang trong cuộc gọi 📞";
+                        btnAcceptCall.Visibility = Visibility.Collapsed; 
+                        btnRejectCall.Content = "☎ Cúp máy";           
+                    }
+                    else if (state.ToLower() == "failed" || state.ToLower() == "disconnected" || state.ToLower() == "closed")
+                    {
+                        txtCallStatus.Text = "Đã kết thúc cuộc gọi.";
+                        
+                        // Đợi 1.5s rồi gọi người lao công ra dọn dẹp form
+                        Task.Delay(1500).ContinueWith(async _ =>
+                            await Dispatcher.Invoke(async () => await HandleEndCallLogic())
+                        );
+                    }
+                });
+            };
+        }
+        private async Task HandleEndCallLogic()
+        {
+            await _webRTCService.CloseCallAsync();
+
+            _isInCall = false;
+            _isRinging = false;
+
+            // Đảm bảo đưa giao diện về trạng thái gốc chuẩn bị cho cuộc gọi sau
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                CallPopup.Visibility = Visibility.Collapsed;
+                btnAcceptCall.Visibility = Visibility.Visible; // QUAN TRỌNG: Hiện lại nút Nghe
+                btnRejectCall.Content = "❌ Từ chối";          // QUAN TRỌNG: Trả lại text gốc
+            });
+        }
         // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
         private void SignalR_OnReceiveMessage(string conversationId, string cipherText, Dictionary<string, string> recipientKeys)
         {
@@ -1212,8 +1401,6 @@ namespace Hermes
                     LastMessage = "Bấm để xem tin nhắn...",
                     LastMessageTime = ""
                 });
-
-                // THÊM ĐÚNG DÒNG NÀY: Ép SignalR chui vào phòng này để chờ tin nhắn
                 await _signalRService.JoinRoomAsync(c.ChatId);
             }
 
@@ -1376,6 +1563,60 @@ namespace Hermes
                     MessageBox.Show($"Lỗi hệ thống khi mã hóa E2EE: {ex.Message}", "Lỗi Bảo Mật", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
+        }
+
+        private async void btnCall_Click(object sender, RoutedEventArgs e)
+        {
+            if (lstChats.SelectedItem is ChatModel selectedChat)
+            {
+                if (_isInCall || _isRinging) return; // Không cho gọi đè
+
+                if (!int.TryParse(selectedChat.ChatId, out int convId)) return;
+                var participants = await Backend.Services.ApiClient.GetParticipantPublicKeysAsync(convId);
+                string targetUserId = participants.Keys.FirstOrDefault(id => id != AuthService.CurrentUserId);
+
+                if (string.IsNullOrEmpty(targetUserId))
+                {
+                    MessageBox.Show("Không tìm thấy đích đến! (Hiện tại WebRTC P2P chỉ hỗ trợ gọi 1-1).");
+                    return;
+                }
+
+                _isRinging = true;
+                _currentCallTargetId = targetUserId;
+
+                // Hiển thị giao diện đổ chuông
+                btnAcceptCall.Visibility = Visibility.Collapsed; // Ẩn nút Nghe vì mình là người gọi
+                btnRejectCall.Content = "☎ Cúp máy";
+                txtCallStatus.Text = "Đang đổ chuông...";
+                CallPopup.Visibility = Visibility.Visible;
+
+                await _webRTCService.InitializeCallAsync();
+                await _webRTCService.CreateOfferAsync();
+            }
+        }
+
+        // Khi mình bấm nút NGHE
+        private async void btnAcceptCall_Click(object sender, RoutedEventArgs e)
+        {
+            _isRinging = false;
+            _isInCall = true;
+
+            txtCallStatus.Text = "Đang kết nối...";
+            btnAcceptCall.Visibility = Visibility.Collapsed;
+            btnRejectCall.Content = "☎ Cúp máy";
+
+            await _webRTCService.InitializeCallAsync();
+            await _webRTCService.ReceiveOfferAndCreateAnswerAsync(_incomingOffer);
+        }
+
+        // Khi mình bấm nút TỪ CHỐI / CÚP MÁY
+        private async void btnRejectCall_Click(object sender, RoutedEventArgs e)
+        {
+            // Báo cho Server biết để ngắt máy người kia
+            await _signalRService.EndCallAsync(_currentCallTargetId);
+
+            // Tự dọn dẹp máy mình
+            await HandleEndCallLogic();
         }
     }
 }
@@ -2017,12 +2258,12 @@ namespace Hermes
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="CÃ i Ä‘áº·t tÃ i khoáº£n" FontSize="20" FontWeight="Bold" Foreground="#1F2937" HorizontalAlignment="Center" Margin="0,0,0,25"/>
+        <TextBlock Grid.Row="0" Text="CÃ i Ä‘áº·t tÃ i khoáº£n" FontSize="20" FontWeight="Bold" Foreground="#1F2937" HorizontalAlignment="Center" Margin="0,0,0,20"/>
 
-        <StackPanel Grid.Row="1">
+        <StackPanel Grid.Row="1" VerticalAlignment="Top">
             <Ellipse Width="80" Height="80" Fill="#E5E7EB" HorizontalAlignment="Center" Margin="0,0,0,15"/>
 
-            <TextBlock Text="ThÃ´ng tin Ä‘á»‹nh danh" FontWeight="SemiBold" Foreground="#6B7280" FontSize="12" Margin="0,10,0,5"/>
+            <TextBlock Text="ThÃ´ng tin Ä‘á»‹nh danh" FontWeight="SemiBold" Foreground="#6B7280" FontSize="12" Margin="0,0,0,5"/>
             <Border Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="15">
                 <StackPanel>
                     <TextBlock x:Name="txtUserName" Text="TÃªn: loading..." Foreground="#111827" FontWeight="Bold" FontSize="16" Margin="0,0,0,5"/>
@@ -2030,15 +2271,17 @@ namespace Hermes
                     <TextBlock x:Name="txtUserId" Text="ID: ..." Foreground="#9CA3AF" FontSize="12"/>
                 </StackPanel>
             </Border>
-
-            <Button Content="ðŸ”‘ Xem khÃ³a báº£o máº­t (RSA)" Click="btnSettings_Click" 
-                    Background="#3B82F6" Foreground="White" FontWeight="SemiBold" 
-                    Style="{StaticResource ModernButtonStyle}" Margin="0,25,0,0"/>
         </StackPanel>
 
-        <Button x:Name="btnLogout" Grid.Row="2" Content="ÄÄƒng xuáº¥t" Height="42" 
-                Background="#FEE2E2" Foreground="#EF4444" FontWeight="Bold" 
-                Style="{StaticResource ModernButtonStyle}" Click="btnLogout_Click" Margin="0,10,0,0"/>
+        <StackPanel Grid.Row="2" VerticalAlignment="Bottom">
+            <Button Content="ðŸ”‘ Xem khÃ³a báº£o máº­t (RSA)" Click="btnSettings_Click" Height="42"
+                    Background="#3B82F6" Foreground="White" FontWeight="SemiBold" 
+                    Style="{StaticResource ModernButtonStyle}" Margin="0,0,0,10"/>
+
+            <Button x:Name="btnLogout" Content="ÄÄƒng xuáº¥t" Height="42" 
+                    Background="#FEE2E2" Foreground="#EF4444" FontWeight="Bold" 
+                    Style="{StaticResource ModernButtonStyle}" Click="btnLogout_Click"/>
+        </StackPanel>
     </Grid>
 </Window>
 
@@ -2070,6 +2313,8 @@ namespace Hermes
             var res = MessageBox.Show("Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n Ä‘Äƒng xuáº¥t?", "XÃ¡c nháº­n", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (res == MessageBoxResult.Yes)
             {
+                Backend.Services.CryptoService.ClearPrivateKeyLocal();
+
                 AuthService.Logout();
                 MainWindow login = new MainWindow();
                 login.Show();
@@ -2087,7 +2332,6 @@ namespace Hermes
         }
         private void btnSettings_Click(object sender, RoutedEventArgs e)
         {
-            // Äoáº¡n code báº¡n Ä‘Ã£ viáº¿t
             string myPrivateKey = AuthService.CurrentPrivateKey;
             MessageBox.Show($"ÄÃ‚Y LÃ€ KHÃ“A BÃ Máº¬T RSA Cá»¦A Báº N:\n\n{myPrivateKey}", "KhÃ³a cÃ¡ nhÃ¢n", MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -2509,7 +2753,7 @@ namespace Hermes.Server.Hubs
             var connectionId = Context.ConnectionId;
 
             // Náº¿u user rá»›t máº¡ng hoáº·c táº¯t app, tÃ¬m xem Ä‘Ã³ lÃ  ai
-            if (_connectionUserMap.TryRemove(connectionId, out string userId))
+            if (_connectionUserMap.TryRemove(connectionId, out string? userId))
             {
                 if (_userConnections.TryGetValue(userId, out var connections))
                 {
@@ -2566,6 +2810,42 @@ namespace Hermes.Server.Hubs
                 }
             }
         }
+        // 1. A gá»i B (Gá»­i SDP Offer)
+        public async Task SendWebRTCOffer(string targetUserId, string sdpOffer)
+        {
+            if (_userConnections.TryGetValue(targetUserId, out var connections))
+            {
+                _connectionUserMap.TryGetValue(Context.ConnectionId, out string callerId);
+                await Clients.Clients(connections.ToList()).SendAsync("ReceiveWebRTCOffer", callerId, sdpOffer);
+            }
+        }
+
+        // 2. B báº¯t mÃ¡y vÃ  tráº£ lá»i A (Gá»­i SDP Answer)
+        public async Task SendWebRTCAnswer(string targetUserId, string sdpAnswer)
+        {
+            if (_userConnections.TryGetValue(targetUserId, out var connections))
+            {
+                await Clients.Clients(connections.ToList()).SendAsync("ReceiveWebRTCAnswer", sdpAnswer);
+            }
+        }
+
+        // 3. A vÃ  B trao Ä‘á»•i Ä‘á»‹a chá»‰ máº¡ng vá»›i nhau (ICE Candidates)
+        public async Task SendIceCandidate(string targetUserId, string candidate)
+        {
+            if (_userConnections.TryGetValue(targetUserId, out var connections))
+            {
+                await Clients.Clients(connections.ToList()).SendAsync("ReceiveIceCandidate", candidate);
+            }
+        }
+
+        // 4. Khi má»™t bÃªn cÃºp mÃ¡y / tá»« chá»‘i
+        public async Task EndCall(string targetUserId)
+        {
+            if (_userConnections.TryGetValue(targetUserId, out var connections))
+            {
+                await Clients.Clients(connections.ToList()).SendAsync("CallEnded");
+            }
+        }
     }
 }
 
@@ -2615,7 +2895,7 @@ MYSQL_CONNECTION_STRING="Server=100.83.55.117;Database=hermes_db;Uid=root;Pwd=ro
   },
   "AllowedHosts": "*",
   "ConnectionStrings": {
-    "DefaultConnection": "Server=100.83.55.117;Database=hermes_db;Uid=root;Pwd=root;"
+    "DefaultConnection": "Server=100.83.55.117;Database=hermes_db;Uid=root;Pwd=root;SslMode=none;Connection Timeout=60;Default Command Timeout=60;"
   }
 }
 
@@ -2630,7 +2910,7 @@ MYSQL_CONNECTION_STRING="Server=100.83.55.117;Database=hermes_db;Uid=root;Pwd=ro
   },
   "AllowedHosts": "*",
   "ConnectionStrings": {
-    "DefaultConnection": "Server=100.83.55.117;Database=hermes_db;Uid=root;Pwd=root;"
+    "DefaultConnection": "Server=100.83.55.117;Database=hermes_db;Uid=root;Pwd=root;SslMode=none;Connection Timeout=60;Default Command Timeout=60;"
   }
 }
 
@@ -2639,7 +2919,7 @@ MYSQL_CONNECTION_STRING="Server=100.83.55.117;Database=hermes_db;Uid=root;Pwd=ro
 using Hermes.Server.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
-
+builder.WebHost.UseUrls("http://0.0.0.0:5042");
 // Add services to the container.
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -2654,7 +2934,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 
 app.MapControllers();
 app.MapHub<ChatHub>("/chathub");
@@ -2667,10 +2947,10 @@ namespace Hermes.Shared.DTOs
 {
     public class ChatListResponse
     {
-        public string ChatId { get; set; }
+        public string? ChatId { get; set; }
         public bool IsGroup { get; set; }
-        public string GroupName { get; set; }
-        public string OtherUserName { get; set; } // Dùng cho chat 1-1
+        public string? GroupName { get; set; }
+        public string? OtherUserName { get; set; } // Dùng cho chat 1-1
     }
 }
 
@@ -2684,7 +2964,7 @@ namespace Hermes.Shared.DTOs
     {
         public bool IsGroup { get; set; }
         public string? GroupName { get; set; }
-        public List<string> ParticipantIds { get; set; }
+        public List<string>? ParticipantIds { get; set; }
     }
 }
 
@@ -2726,12 +3006,12 @@ namespace Hermes.Shared.DTOs
     public class SendMessageDto
     {
         public int ConversationId { get; set; }
-        public string SenderId { get; set; }
-        public string CipherText { get; set; } // Nội dung đã mã hóa AES
+        public string? SenderId { get; set; }
+        public string? CipherText { get; set; } // Nội dung đã mã hóa AES
         public int TimeToLive { get; set; } = 0; // 0 là vĩnh viễn
 
         // Dictionary lưu trữ: [Id_Người_Nhận] -> [Session_Key_Đã_Mã_Hóa_RSA]
-        public Dictionary<string, string> RecipientSessionKeys { get; set; }
+        public Dictionary<string, string>? RecipientSessionKeys { get; set; }
     }
 }
 
@@ -2745,10 +3025,10 @@ namespace Hermes.Shared.DTOs
 {
     public class UpdateKeyRequest
     {
-        public string UserId { get; set; }
-        public string PublicKey { get; set; }
-        public string WrappedPrivateKey { get; set; }
-        public string Salt { get; set; }
+        public string? UserId { get; set; }
+        public string? PublicKey { get; set; }
+        public string? WrappedPrivateKey { get; set; }
+        public string? Salt { get; set; }
     }
 }
 
@@ -2758,8 +3038,8 @@ namespace Hermes.Shared.DTOs
 {
     public class UserInfoResponse
     {
-        public string UserId { get; set; }
-        public string FullName { get; set; }
+        public string? UserId { get; set; }
+        public string? FullName { get; set; }
     }
 }
 
@@ -2785,14 +3065,14 @@ namespace Hermes.Shared.Models
 {
     public class MessageModel : INotifyPropertyChanged
     {
-        public string EncryptedSessionKey { get; set; }
-        public string SenderId { get; set; }
-        public string SenderName { get; set; }
-        public string Content { get; set; }
-        public string Time { get; set; }
+        public string? EncryptedSessionKey { get; set; }
+        public string? SenderId { get; set; }
+        public string? SenderName { get; set; }
+        public string? Content { get; set; }
+        public string? Time { get; set; }
         public bool IsMine { get; set; }
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -2815,7 +3095,7 @@ namespace Hermes.Shared.Models
             Messages = new ObservableCollection<MessageModel>();
         }
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

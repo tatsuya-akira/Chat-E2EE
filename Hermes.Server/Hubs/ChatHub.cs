@@ -100,5 +100,41 @@ namespace Hermes.Server.Hubs
                 }
             }
         }
+        // 1. A gọi B (Gửi SDP Offer)
+        public async Task SendWebRTCOffer(string targetUserId, string sdpOffer)
+        {
+            if (_userConnections.TryGetValue(targetUserId, out var connections))
+            {
+                _connectionUserMap.TryGetValue(Context.ConnectionId, out string callerId);
+                await Clients.Clients(connections.ToList()).SendAsync("ReceiveWebRTCOffer", callerId, sdpOffer);
+            }
+        }
+
+        // 2. B bắt máy và trả lời A (Gửi SDP Answer)
+        public async Task SendWebRTCAnswer(string targetUserId, string sdpAnswer)
+        {
+            if (_userConnections.TryGetValue(targetUserId, out var connections))
+            {
+                await Clients.Clients(connections.ToList()).SendAsync("ReceiveWebRTCAnswer", sdpAnswer);
+            }
+        }
+
+        // 3. A và B trao đổi địa chỉ mạng với nhau (ICE Candidates)
+        public async Task SendIceCandidate(string targetUserId, string candidate)
+        {
+            if (_userConnections.TryGetValue(targetUserId, out var connections))
+            {
+                await Clients.Clients(connections.ToList()).SendAsync("ReceiveIceCandidate", candidate);
+            }
+        }
+
+        // 4. Khi một bên cúp máy / từ chối
+        public async Task EndCall(string targetUserId)
+        {
+            if (_userConnections.TryGetValue(targetUserId, out var connections))
+            {
+                await Clients.Clients(connections.ToList()).SendAsync("CallEnded");
+            }
+        }
     }
 }

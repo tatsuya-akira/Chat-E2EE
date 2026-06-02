@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Collections.Generic;
+using Hermes.Client.Services;
 
 namespace Hermes
 {
@@ -14,7 +15,11 @@ namespace Hermes
     {
         public ObservableCollection<ChatModel> Chats { get; set; }
         private SignalRService _signalRService;
-
+        private WebRTCService _webRTCService;
+        private string _currentCallTargetId; // Lưu ID người mình đang gọi
+        private string _incomingOffer;       // Lưu Lời mời khi người khác gọi tới
+        private bool _isInCall = false;
+        private bool _isRinging = false;
         public ChatWindow()
         {
             InitializeComponent();
@@ -22,7 +27,7 @@ namespace Hermes
             lstChats.ItemsSource = Chats;
 
             // 1. Khởi tạo SignalR
-            _signalRService = new SignalRService("http://localhost:5042/chathub");
+            _signalRService = new SignalRService("http://100.67.94.18:5042/chathub");
 
             // 2. Lắng nghe sự kiện nhắn tin tới
             _signalRService.OnReceiveMessage += SignalR_OnReceiveMessage;
@@ -46,8 +51,90 @@ namespace Hermes
                     LoadRealChatsAsync();
                 });
             };
-        }
+            _webRTCService = new Hermes.Client.Services.WebRTCService();
 
+            // Khi WebRTC tạo xong tín hiệu, đẩy nó qua SignalR
+            _webRTCService.OnOfferReady += async (offer) => await _signalRService.SendWebRTCOfferAsync(_currentCallTargetId, offer);
+            _webRTCService.OnAnswerReady += async (answer) => await _signalRService.SendWebRTCAnswerAsync(_currentCallTargetId, answer);
+            _webRTCService.OnIceCandidateReady += async (candidate) => await _signalRService.SendIceCandidateAsync(_currentCallTargetId, candidate);
+
+            // --- LẮNG NGHE TÍN HIỆU TỪ NGƯỜI KHÁC ---
+            _signalRService.OnReceiveWebRTCOffer += (callerId, offer) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    // Chốt chặn: Đang gọi mà có người khác gọi tới thì bỏ qua
+                    if (_isInCall || _isRinging) return;
+
+                    _isRinging = true;
+                    _currentCallTargetId = callerId; 
+                    _incomingOffer = offer;          
+                    
+                    txtCallStatus.Text = "Ai đó đang gọi bạn...";
+                    
+                    // Reset lại giao diện chuẩn
+                    btnAcceptCall.Visibility = Visibility.Visible; 
+                    btnRejectCall.Content = "❌ Từ chối";
+                    CallPopup.Visibility = Visibility.Visible; 
+                });
+            };
+
+            _signalRService.OnReceiveWebRTCAnswer += (answer) =>
+                Dispatcher.Invoke(() => _webRTCService.ReceiveAnswer(answer));
+
+            _signalRService.OnReceiveIceCandidate += (candidate) =>
+                Dispatcher.Invoke(() => _webRTCService.AddIceCandidate(candidate));
+
+            // KHI ĐỐI PHƯƠNG CÚP MÁY HOẶC TỪ CHỐI
+            _signalRService.OnCallEnded += () =>
+            {
+                Dispatcher.Invoke(async () =>
+                {
+                    await HandleEndCallLogic();
+                    MessageBox.Show("Cuộc gọi đã kết thúc.");
+                });
+            };
+
+            // KHI TRẠNG THÁI WEBRTC THAY ĐỔI
+            _webRTCService.OnCallStateChanged += (state) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (state.ToLower() == "connected")
+                    {
+                        _isInCall = true; // Đánh dấu đã kết nối
+                        _isRinging = false;
+                        txtCallStatus.Text = "Đang trong cuộc gọi 📞";
+                        btnAcceptCall.Visibility = Visibility.Collapsed; 
+                        btnRejectCall.Content = "☎ Cúp máy";           
+                    }
+                    else if (state.ToLower() == "failed" || state.ToLower() == "disconnected" || state.ToLower() == "closed")
+                    {
+                        txtCallStatus.Text = "Đã kết thúc cuộc gọi.";
+                        
+                        // Đợi 1.5s rồi gọi người lao công ra dọn dẹp form
+                        Task.Delay(1500).ContinueWith(async _ =>
+                            await Dispatcher.Invoke(async () => await HandleEndCallLogic())
+                        );
+                    }
+                });
+            };
+        }
+        private async Task HandleEndCallLogic()
+        {
+            await _webRTCService.CloseCallAsync();
+
+            _isInCall = false;
+            _isRinging = false;
+
+            // Đảm bảo đưa giao diện về trạng thái gốc chuẩn bị cho cuộc gọi sau
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                CallPopup.Visibility = Visibility.Collapsed;
+                btnAcceptCall.Visibility = Visibility.Visible; // QUAN TRỌNG: Hiện lại nút Nghe
+                btnRejectCall.Content = "❌ Từ chối";          // QUAN TRỌNG: Trả lại text gốc
+            });
+        }
         // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
         private void SignalR_OnReceiveMessage(string conversationId, string cipherText, Dictionary<string, string> recipientKeys)
         {
@@ -267,6 +354,60 @@ namespace Hermes
                     MessageBox.Show($"Lỗi hệ thống khi mã hóa E2EE: {ex.Message}", "Lỗi Bảo Mật", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
+        }
+
+        private async void btnCall_Click(object sender, RoutedEventArgs e)
+        {
+            if (lstChats.SelectedItem is ChatModel selectedChat)
+            {
+                if (_isInCall || _isRinging) return; // Không cho gọi đè
+
+                if (!int.TryParse(selectedChat.ChatId, out int convId)) return;
+                var participants = await Backend.Services.ApiClient.GetParticipantPublicKeysAsync(convId);
+                string targetUserId = participants.Keys.FirstOrDefault(id => id != AuthService.CurrentUserId);
+
+                if (string.IsNullOrEmpty(targetUserId))
+                {
+                    MessageBox.Show("Không tìm thấy đích đến! (Hiện tại WebRTC P2P chỉ hỗ trợ gọi 1-1).");
+                    return;
+                }
+
+                _isRinging = true;
+                _currentCallTargetId = targetUserId;
+
+                // Hiển thị giao diện đổ chuông
+                btnAcceptCall.Visibility = Visibility.Collapsed; // Ẩn nút Nghe vì mình là người gọi
+                btnRejectCall.Content = "☎ Cúp máy";
+                txtCallStatus.Text = "Đang đổ chuông...";
+                CallPopup.Visibility = Visibility.Visible;
+
+                await _webRTCService.InitializeCallAsync();
+                await _webRTCService.CreateOfferAsync();
+            }
+        }
+
+        // Khi mình bấm nút NGHE
+        private async void btnAcceptCall_Click(object sender, RoutedEventArgs e)
+        {
+            _isRinging = false;
+            _isInCall = true;
+
+            txtCallStatus.Text = "Đang kết nối...";
+            btnAcceptCall.Visibility = Visibility.Collapsed;
+            btnRejectCall.Content = "☎ Cúp máy";
+
+            await _webRTCService.InitializeCallAsync();
+            await _webRTCService.ReceiveOfferAndCreateAnswerAsync(_incomingOffer);
+        }
+
+        // Khi mình bấm nút TỪ CHỐI / CÚP MÁY
+        private async void btnRejectCall_Click(object sender, RoutedEventArgs e)
+        {
+            // Báo cho Server biết để ngắt máy người kia
+            await _signalRService.EndCallAsync(_currentCallTargetId);
+
+            // Tự dọn dẹp máy mình
+            await HandleEndCallLogic();
         }
     }
 }
