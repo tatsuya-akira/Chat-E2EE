@@ -30,7 +30,6 @@ namespace Hermes.Client.Services
         public async Task InitializeCallAsync()
         {
             _isRemoteDescriptionSet = false;
-            // KHÔNG clear queue ở đây! Giữ nguyên các IP dự phòng.
 
             var config = new RTCConfiguration
             {
@@ -38,43 +37,35 @@ namespace Hermes.Client.Services
             };
 
             _peerConnection = new RTCPeerConnection(config);
-
             _audioEndPoint = new WindowsAudioEndPoint(new AudioEncoder());
-            var audioTrack = new MediaStreamTrack(_audioEndPoint.GetAudioSourceFormats(), MediaStreamStatusEnum.SendRecv);
+
+            // ==========================================
+            // 🚀 CÚ CHỐT: ÉP ĐỒNG BỘ OPUS CHO CẢ MẠNG LẪN LOA
+            // ==========================================
+            var allFormats = _audioEndPoint.GetAudioSourceFormats();
+
+            // Tìm chuẩn OPUS (Concentus.dll bạn đã load thành công sẽ lo vụ này)
+            var targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "OPUS").ToList();
+            if (targetFormat.Count == 0) // Dự phòng nếu máy xui xẻo không có OPUS
+                targetFormat = allFormats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
+
+            // 1. ÉP WEBRTC CHỈ ĐƯỢC TRUYỀN MẠNG BẰNG CHUẨN NÀY
+            var audioTrack = new MediaStreamTrack(targetFormat, MediaStreamStatusEnum.SendRecv);
             _peerConnection.addTrack(audioTrack);
 
+            // 2. ÉP LOA GIẢI MÃ ĐÚNG CHUẨN NÀY (HẾT LỆCH PHA)
+            _audioEndPoint.SetAudioSinkFormat(targetFormat.First());
+            System.Diagnostics.Debug.WriteLine($"🎧 [CHỐT HẠ] Mạng và Loa cùng đồng bộ chuẩn: {targetFormat.First().FormatName}");
             // ==========================================
-            // FIX CODEC: CHỐT CHUẨN ÂM THANH NGAY TỪ ĐẦU
-            // Ưu tiên OPUS (rất mượt), nếu không có thì xuống PCMU, bí quá thì lấy cái đầu tiên
-            // ==========================================
-            var formats = _audioEndPoint.GetAudioSourceFormats();
-            var fallbackFormat = formats.First();
 
-            var opusFormats = formats.Where(f => f.FormatName.ToUpper() == "OPUS").ToList();
-            var pcmuFormats = formats.Where(f => f.FormatName.ToUpper() == "PCMU").ToList();
-
-            if (opusFormats.Count > 0) fallbackFormat = opusFormats.First();
-            else if (pcmuFormats.Count > 0) fallbackFormat = pcmuFormats.First();
-
-            _audioEndPoint.SetAudioSinkFormat(fallbackFormat);
-            Debug.WriteLine($"🎧 [FIXED] Đã ép Loa dùng chuẩn: {fallbackFormat.FormatName}");
-
-            // ==========================================
-            // THU ÂM TỪ MIC VÀ PHÁT QUA MẠNG
-            // ==========================================
             _audioEndPoint.OnAudioSourceEncodedSample += (duration, payload) =>
             {
                 bool isSilence = payload.All(b => b == 0 || b == 255);
                 if (!isSilence)
                 {
-                    // Tạm ẩn log để đỡ giật màn hình, nếu muốn dò mic thì mở lên
-                    Debug.WriteLine($"🎤 [MIC ĐANG SỐNG] Gửi {payload.Length} bytes âm thanh THẬT đi!");
+                    // Tạm bật để thấy gói tin truyền đi
+                    System.Diagnostics.Debug.WriteLine($"🎤 [MIC ĐANG SỐNG] Gửi {payload.Length} bytes âm thanh THẬT đi!");
                 }
-                else
-                {
-                    Debug.WriteLine("⚠️ [CẢNH BÁO] Mic đang gửi đi sự im lặng tuyệt đối (Lỗi Mic hoặc bị Windows chặn)!");
-                }
-
                 _peerConnection.SendAudio(duration, payload);
             };
 
