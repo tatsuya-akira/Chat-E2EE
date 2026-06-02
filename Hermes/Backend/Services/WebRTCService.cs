@@ -128,10 +128,9 @@ namespace Hermes.Client.Services
             {
                 if (media == SDPMediaTypesEnum.audio)
                 {
-                    // 1. In ra số byte nhận được để so khớp với bên gửi
-                    System.Diagnostics.Debug.WriteLine($"🔊 [MÁY NHẬN] Bắt được {rtpPkt.Payload.Length} bytes từ IP {rep.Address}");
+                    // In thêm PayloadType để kiểm chứng
+                    System.Diagnostics.Debug.WriteLine($"🔊 [MÁY NHẬN] Nhận {rtpPkt.Payload.Length} bytes | PayloadType: {rtpPkt.Header.PayloadType}");
 
-                    // 2. Hàm này chính là hàm NÉM dữ liệu vào bộ giải mã (Decoder) và phát ra loa
                     _audioEndPoint.GotAudioRtp(
                         rep, rtpPkt.Header.SyncSource, rtpPkt.Header.SequenceNumber,
                         rtpPkt.Header.Timestamp, rtpPkt.Header.PayloadType,
