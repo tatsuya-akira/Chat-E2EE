@@ -35,7 +35,36 @@
                         </Style>
                     </Button.Resources>
                 </Button>
+                <Grid Margin="0,15,0,15">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Separator Grid.Column="0" VerticalAlignment="Center" Background="#E5E7EB"/>
+                    <TextBlock Grid.Column="1" Text="hoặc" Margin="10,0" Foreground="#9CA3AF" FontSize="12"/>
+                    <Separator Grid.Column="2" VerticalAlignment="Center" Background="#E5E7EB"/>
+                </Grid>
 
+                <Button x:Name="btnGoogleLogin" Height="40" Background="White" BorderBrush="#D1D5DB" BorderThickness="1" 
+                        Cursor="Hand" Click="btnGoogleLogin_Click">
+                    <Button.Resources>
+                        <Style TargetType="Border">
+                            <Setter Property="CornerRadius" Value="5"/>
+                        </Style>
+                    </Button.Resources>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,10,0" VerticalAlignment="Center">
+                            <TextBlock Text="G" FontWeight="Bold" Foreground="#4285F4" FontSize="16"/>
+                            <TextBlock Text="o" FontWeight="Bold" Foreground="#EA4335" FontSize="16"/>
+                            <TextBlock Text="o" FontWeight="Bold" Foreground="#FBBC05" FontSize="16"/>
+                            <TextBlock Text="g" FontWeight="Bold" Foreground="#4285F4" FontSize="16"/>
+                            <TextBlock Text="l" FontWeight="Bold" Foreground="#34A853" FontSize="16"/>
+                            <TextBlock Text="e" FontWeight="Bold" Foreground="#EA4335" FontSize="16"/>
+                        </StackPanel>
+                        <TextBlock Text="Đăng nhập bằng Google" FontWeight="SemiBold" Foreground="#374151" FontSize="14" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
                     <TextBlock Text="Chưa có tài khoản? " Foreground="#6B7280"/>
                     <TextBlock Text="Đăng ký ngay" Foreground="#3B82F6" FontWeight="SemiBold" 

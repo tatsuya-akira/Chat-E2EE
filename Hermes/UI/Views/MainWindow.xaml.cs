@@ -1,7 +1,11 @@
-﻿using System;
+﻿using Microsoft.VisualBasic;
+using System;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
+using Google.Apis.Auth.OAuth2;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Hermes
 {
@@ -127,6 +131,113 @@ namespace Hermes
             ForgotPasswordWindow forgot = new ForgotPasswordWindow();
             forgot.Show();
             this.Close();
+        }
+
+        public async Task<string> GetGoogleIdTokenAsync()
+        {
+            DotNetEnv.Env.TraversePath().Load();
+
+            // 1. DÁN CLIENT ID VÀ CLIENT SECRET CỦA BẠN VÀO ĐÂY
+            string clientId = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID") ?? "GOOGLE_CLIENT_ID";
+            string clientSecret = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_SECRET") ?? "GOOGLE_CLIENT_SECRET";
+
+            // 2. Xin quyền lấy Email và ID Token (Bắt buộc phải có chữ "openid")
+            string[] scopes = { "openid", "email", "profile" };
+
+            try
+            {
+                ClientSecrets secrets = new ClientSecrets
+                {
+                    ClientId = clientId,
+                    ClientSecret = clientSecret
+                };
+
+                // 3. Lệnh này sẽ bật một cửa sổ trình duyệt Web lên để người dùng đăng nhập Google
+                UserCredential credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
+                    secrets,
+                    scopes,
+                    "user_hermes",
+                    CancellationToken.None,
+                    new Google.Apis.Util.Store.FileDataStore("Hermes.GoogleAuth")
+                );
+
+                // 4. BÙM! Đây chính là cái googleIdToken mà Firebase đang chờ đợi!
+                if (credential.Token.IsExpired(credential.Flow.Clock))
+                {
+                    await credential.RefreshTokenAsync(CancellationToken.None);
+                }
+
+                return credential.Token.AccessToken;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Hủy đăng nhập hoặc có lỗi xảy ra: " + ex.Message);
+            }
+        }
+        private async void btnGoogleLogin_Click(object sender, RoutedEventArgs e)
+        {
+            // Đưa biến này ra ngoài try-catch để lát nữa dùng lại để Reset khóa
+            string e2eePinCode = "";
+
+            try
+            {
+                string idToken = await GetGoogleIdTokenAsync();
+                if (string.IsNullOrEmpty(idToken)) return;
+
+                e2eePinCode = Microsoft.VisualBasic.Interaction.InputBox(
+                    "Vui lòng nhập mã PIN bảo mật E2EE (Tạo mới nếu đăng nhập lần đầu):",
+                    "Bảo mật Hòm thư"
+                );
+
+                if (string.IsNullOrEmpty(e2eePinCode) || e2eePinCode.Length < 4)
+                {
+                    MessageBox.Show("Mã PIN phải từ 4 ký tự trở lên!");
+                    return;
+                }
+
+                bool res = await AuthService.LoginWithGoogleAsync(idToken, e2eePinCode);
+                if (res)
+                {
+                    ChatWindow chat = new ChatWindow();
+                    chat.Show();
+                    this.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                // XỬ LÝ ÊM ÁI LỖI SAI MÃ PIN
+                if (ex.Message.Contains("E2EE_KEY_CORRUPTED"))
+                {
+                    var res = MessageBox.Show(
+                        "Mã PIN bảo mật E2EE không chính xác. Tài khoản cũ của bạn đang được mã hóa bằng một mật khẩu khác.\n\n" +
+                        "Bạn có muốn ĐẶT LẠI TÀI KHOẢN? (Hệ thống sẽ tạo khóa bảo mật mới bằng mã PIN bạn vừa nhập, nhưng lịch sử chat cũ sẽ không thể đọc được).",
+                        "Cảnh báo bảo mật E2EE",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning);
+
+                    if (res == MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            // Dùng chính mã PIN họ vừa nhập ở trên làm chìa khóa mới
+                            await AuthService.ResetAccountKeysAsync(e2eePinCode);
+                            MessageBox.Show("Khôi phục tài khoản thành công! Khóa bảo mật mới đã được tạo.", "Thành công", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                            ChatWindow chat = new ChatWindow();
+                            chat.Show();
+                            this.Close();
+                        }
+                        catch (Exception resetEx)
+                        {
+                            MessageBox.Show("Lỗi khi khôi phục khóa: " + resetEx.Message, "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                        }
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(ex.Message, "Lỗi đăng nhập Google", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
         }
     }
 }

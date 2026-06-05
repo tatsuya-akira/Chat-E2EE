@@ -16,7 +16,7 @@ namespace Hermes.Backend.Services
         {
             _httpClient = new HttpClient();
             // TODO: Load from AppSettings or .env
-            _httpClient.BaseAddress = new Uri("http://100.67.94.18:5042/api/");
+            _httpClient.BaseAddress = new Uri("http://127.0.0.1:5042/api/");
         }
 
         public static async Task<bool> CheckIdentifierExistsAsync(string identifier)
