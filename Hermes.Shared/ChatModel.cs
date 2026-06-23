@@ -6,13 +6,14 @@ namespace Hermes.Shared.Models
 {
     public class MessageModel : INotifyPropertyChanged
     {
-        public string SenderId { get; set; }
-        public string SenderName { get; set; }
-        public string Content { get; set; }
-        public string Time { get; set; }
+        public string? EncryptedSessionKey { get; set; }
+        public string? SenderId { get; set; }
+        public string? SenderName { get; set; }
+        public string? Content { get; set; }
+        public string? Time { get; set; }
         public bool IsMine { get; set; }
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -35,7 +36,7 @@ namespace Hermes.Shared.Models
             Messages = new ObservableCollection<MessageModel>();
         }
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

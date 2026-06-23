@@ -75,3 +75,9 @@ CREATE TABLE MESSAGE_RECIPIENTS (
     CONSTRAINT fk_messagerecipients_msg FOREIGN KEY (MessageId) REFERENCES MESSAGES(Id) ON DELETE CASCADE,
     CONSTRAINT fk_messagerecipients_recipient FOREIGN KEY (RecipientId) REFERENCES USERS(Id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- Chỉnh sửa bảng USERS để hỗ trợ người dùng từ nhiều nền tảng
+ALTER TABLE USERS 
+MODIFY Email VARCHAR(255) NULL, -- Cho phép rỗng (Trường hợp đăng nhập SĐT)
+ADD COLUMN PhoneNumber VARCHAR(20) UNIQUE NULL AFTER Email,
+ADD COLUMN Provider VARCHAR(50) DEFAULT 'password'; -- Lưu 'google', 'phone', hoặc 'password'

@@ -83,8 +83,9 @@ namespace Hermes
                     IsGroup = true;
                     ChatName = groupName;
 
-                    string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
+                    string currentFullName = AuthService.CurrentFullName;
+
+                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName); if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
                     userIdsList.Add(AuthService.CurrentUserId);
 
                     Participants = participantsList.ToArray();
@@ -103,8 +104,9 @@ namespace Hermes
                     ChatName = user.FullName;
 
                     var participantsList = new System.Collections.Generic.List<string> { user.FullName };
-                    string currentFullName = AuthService.GetUsernameByIdentifier(AuthService.CurrentUserId);
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
+                    string currentFullName = AuthService.CurrentFullName;
+
+                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName); if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
 
                     Participants = participantsList.ToArray();
                     UserIds = new[] { user.UserId, AuthService.CurrentUserId };

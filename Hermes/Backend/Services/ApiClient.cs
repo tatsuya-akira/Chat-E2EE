@@ -11,12 +11,12 @@ namespace Hermes.Backend.Services
     public class ApiClient
     {
         private static readonly HttpClient _httpClient;
-        
+
         static ApiClient()
         {
             _httpClient = new HttpClient();
             // TODO: Load from AppSettings or .env
-            _httpClient.BaseAddress = new Uri("http://localhost:5042/api/");
+            _httpClient.BaseAddress = new Uri("http://127.0.0.1:5042/api/");
         }
 
         public static async Task<bool> CheckIdentifierExistsAsync(string identifier)
@@ -70,19 +70,22 @@ namespace Hermes.Backend.Services
             }
             return true; // Lưu Database thành công!
         }
-        public static async Task<List<MessageModel>> GetChatHistoryAsync(int conversationId)
+        public static async Task<List<MessageModel>> GetChatHistoryAsync(int conversationId, string userId)
         {
-            try
+            // Thêm userId vào URL
+            var response = await _httpClient.GetAsync($"Message/history/{conversationId}/{userId}");
+
+            if (response.IsSuccessStatusCode)
             {
-                var response = await _httpClient.GetAsync($"Message/history/{conversationId}");
-                if (response.IsSuccessStatusCode)
-                {
-                    // Map từ DTO Server về Model hiển thị của WPF
-                    var history = await response.Content.ReadFromJsonAsync<List<MessageModel>>();
-                    return history ?? new List<MessageModel>();
-                }
+                return await response.Content.ReadFromJsonAsync<List<MessageModel>>() ?? new List<MessageModel>();
             }
-            catch (Exception ex) { /* Log lỗi */ }
+            else
+            {
+                // MÁY QUÉT LỖI: Nếu API thất bại, nó sẽ pop-up lên báo cho bạn biết ngay!
+                string errorDetail = await response.Content.ReadAsStringAsync();
+                System.Windows.MessageBox.Show($"Không thể tải lịch sử!\nHTTP Status: {response.StatusCode}\nChi tiết: {errorDetail}", "Debug từ API Server");
+            }
+
             return new List<MessageModel>();
         }
         public static async Task<List<ChatListResponse>> GetMyChatsAsync(string userId)
@@ -97,6 +100,38 @@ namespace Hermes.Backend.Services
             }
             catch { /* Xử lý lỗi mạng */ }
             return new List<ChatListResponse>();
+        }
+        public static async Task<Dictionary<string, string>> GetParticipantPublicKeysAsync(int conversationId)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync($"Conversation/{conversationId}/public-keys");
+                if (response.IsSuccessStatusCode)
+                {
+                    return await response.Content.ReadFromJsonAsync<Dictionary<string, string>>() ?? new Dictionary<string, string>();
+                }
+            }
+            catch { /* Lỗi mạng */ }
+
+            return new Dictionary<string, string>();
+        }
+        public static async Task<string> GetUsernameAsync(string userId)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync($"Conversation/username/{userId}");
+                if (response.IsSuccessStatusCode)
+                {
+                    return await response.Content.ReadAsStringAsync() ?? "Unknown";
+                }
+            }
+            catch { /* Lỗi mạng */ }
+            return "Unknown";
+        }
+        public static async Task<bool> UpdateUserKeysAsync(UpdateKeyRequest request)
+        {
+            var response = await _httpClient.PutAsJsonAsync("Auth/update-keys", request);
+            return response.IsSuccessStatusCode;
         }
     }
 }
