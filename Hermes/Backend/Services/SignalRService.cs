@@ -8,13 +8,10 @@ namespace Hermes.Backend.Services
     public class SignalRService
     {
         private HubConnection _connection;
-        public event Action<string, string, Dictionary<string, string>> OnReceiveMessage;
+        public event Action<string, string> OnReceiveMessage;
         public event Action<string, string, int> OnIncomingCall;
-        public event Action OnNewChatNotification;
-        public event Action<string, string> OnReceiveWebRTCOffer; // Nhận lời mời (Kèm ID người gọi)
-        public event Action<string> OnReceiveWebRTCAnswer;        // Nhận phản hồi
-        public event Action<string> OnReceiveIceCandidate;        // Nhận IP mặt tiền
-        public event Action OnCallEnded;                          // Cúp máy
+
+        // Thêm Event báo trạng thái Online/Offline
         public event Action<string, bool> OnUserStatusChanged;
 
         public SignalRService(string hubUrl)
@@ -24,9 +21,9 @@ namespace Hermes.Backend.Services
                 .WithAutomaticReconnect() // Tự kết nối lại nếu rớt mạng
                 .Build();
 
-            _connection.On<string, string, Dictionary<string, string>>("ReceiveMessage", (conversationId, encryptedMessage, recipientKeys) =>
+            _connection.On<string, string>("ReceiveMessage", (senderId, encryptedMessage) =>
             {
-                OnReceiveMessage?.Invoke(conversationId, encryptedMessage, recipientKeys);
+                OnReceiveMessage?.Invoke(senderId, encryptedMessage);
             });
 
             _connection.On<string, string, int>("IncomingCall", (callerId, ip, port) =>
@@ -39,15 +36,6 @@ namespace Hermes.Backend.Services
             {
                 OnUserStatusChanged?.Invoke(userId, isOnline);
             });
-            // 2. Thêm cái này vào trong Constructor để lắng nghe Server
-            _connection.On("ReceiveNewChatNotification", () =>
-            {
-                OnNewChatNotification?.Invoke();
-            });
-            _connection.On<string, string>("ReceiveWebRTCOffer", (callerId, offer) => OnReceiveWebRTCOffer?.Invoke(callerId, offer));
-            _connection.On<string>("ReceiveWebRTCAnswer", (answer) => OnReceiveWebRTCAnswer?.Invoke(answer));
-            _connection.On<string>("ReceiveIceCandidate", (candidate) => OnReceiveIceCandidate?.Invoke(candidate));
-            _connection.On("CallEnded", () => OnCallEnded?.Invoke());
         }
 
         public async Task ConnectAsync(string userId)
@@ -71,11 +59,11 @@ namespace Hermes.Backend.Services
             }
         }
 
-        public async Task SendMessageAsync(string conversationId, string message, Dictionary<string, string> recipientKeys)
+        public async Task SendMessageAsync(string receiverId, string encryptedMessage)
         {
-            if (_connection.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected)
+            if (_connection.State == HubConnectionState.Connected)
             {
-                await _connection.InvokeAsync("SendMessage", conversationId, message, recipientKeys);
+                await _connection.InvokeAsync("SendMessage", receiverId, encryptedMessage);
             }
         }
 
@@ -94,23 +82,5 @@ namespace Hermes.Backend.Services
             }
             return new List<string>();
         }
-        public async Task JoinRoomAsync(string conversationId)
-        {
-            if (_connection.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected)
-            {
-                await _connection.InvokeAsync("JoinRoom", conversationId);
-            }
-        }
-        public async Task SendNewChatNotificationAsync(List<string> participantIds)
-        {
-            if (_connection.State == HubConnectionState.Connected)
-            {
-                await _connection.InvokeAsync("NotifyNewChat", participantIds);
-            }
-        }
-        public async Task SendWebRTCOfferAsync(string targetId, string offer) => await _connection.InvokeAsync("SendWebRTCOffer", targetId, offer);
-        public async Task SendWebRTCAnswerAsync(string targetId, string answer) => await _connection.InvokeAsync("SendWebRTCAnswer", targetId, answer);
-        public async Task SendIceCandidateAsync(string targetId, string candidate) => await _connection.InvokeAsync("SendIceCandidate", targetId, candidate);
-        public async Task EndCallAsync(string targetId) => await _connection.InvokeAsync("EndCall", targetId);
     }
 }

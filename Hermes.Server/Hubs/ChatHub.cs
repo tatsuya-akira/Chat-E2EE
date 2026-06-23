@@ -16,7 +16,6 @@ namespace Hermes.Server.Hubs
 
         public async Task RegisterUser(string userId)
         {
-            if (string.IsNullOrEmpty(userId)) return;
             var connectionId = Context.ConnectionId;
 
             // 1. Thêm vào Map User -> Connections
@@ -43,7 +42,7 @@ namespace Hermes.Server.Hubs
             var connectionId = Context.ConnectionId;
 
             // Nếu user rớt mạng hoặc tắt app, tìm xem đó là ai
-            if (_connectionUserMap.TryRemove(connectionId, out string? userId))
+            if (_connectionUserMap.TryRemove(connectionId, out string userId))
             {
                 if (_userConnections.TryGetValue(userId, out var connections))
                 {
@@ -69,72 +68,15 @@ namespace Hermes.Server.Hubs
             return _userConnections.Keys.ToList();
         }
 
-        // Hàm cho phép Client chui vào một phòng chat cụ thể
-        public async Task JoinRoom(string conversationId)
-        {
-            await Groups.AddToGroupAsync(Context.ConnectionId, conversationId);
-        }
-
         // --- CÁC HÀM CŨ GIỮ NGUYÊN ---
-        // Đổi tham số hàm SendMessage
-        public async Task SendMessage(string conversationId, string encryptedMessage, Dictionary<string, string> recipientKeys)
+        public async Task SendMessage(string receiverId, string encryptedMessage)
         {
-            // Bắn cả dictionary khóa qua mạng
-            await Clients.OthersInGroup(conversationId).SendAsync("ReceiveMessage", conversationId, encryptedMessage, recipientKeys);
+            await Clients.Group(receiverId).SendAsync("ReceiveMessage", Context.ConnectionId, encryptedMessage);
         }
 
         public async Task InitiateCall(string receiverId, string myIp, int myPort)
         {
             await Clients.Group(receiverId).SendAsync("IncomingCall", Context.ConnectionId, myIp, myPort);
-        }
-        // Hàm này nhận danh sách những người trong phòng mới và gọi họ dậy
-        public async Task NotifyNewChat(List<string> participantIds)
-        {
-            foreach (var userId in participantIds)
-            {
-                // connections ở đây là một HashSet<string> chứa tất cả các máy đang mở của userId này
-                if (_userConnections.TryGetValue(userId, out var connections))
-                {
-                    // Phải chuyển nó thành dạng List thì hàm Clients() mới hiểu
-                    await Clients.Clients(connections.ToList()).SendAsync("ReceiveNewChatNotification");
-                }
-            }
-        }
-        // 1. A gọi B (Gửi SDP Offer)
-        public async Task SendWebRTCOffer(string targetUserId, string sdpOffer)
-        {
-            if (_userConnections.TryGetValue(targetUserId, out var connections))
-            {
-                _connectionUserMap.TryGetValue(Context.ConnectionId, out string callerId);
-                await Clients.Clients(connections.ToList()).SendAsync("ReceiveWebRTCOffer", callerId, sdpOffer);
-            }
-        }
-
-        // 2. B bắt máy và trả lời A (Gửi SDP Answer)
-        public async Task SendWebRTCAnswer(string targetUserId, string sdpAnswer)
-        {
-            if (_userConnections.TryGetValue(targetUserId, out var connections))
-            {
-                await Clients.Clients(connections.ToList()).SendAsync("ReceiveWebRTCAnswer", sdpAnswer);
-            }
-        }
-
-        // 3. A và B trao đổi địa chỉ mạng với nhau (ICE Candidates)
-        public async Task SendIceCandidate(string targetUserId, string candidate)
-        {
-            if (_userConnections.TryGetValue(targetUserId, out var connections))
-            {
-                await Clients.Clients(connections.ToList()).SendAsync("ReceiveIceCandidate", candidate);
-            }
-        }
-
-        // 4. Khi một bên cúp máy / từ chối
-        public async Task EndCall(string targetUserId)
-        {
-            if (_userConnections.TryGetValue(targetUserId, out var connections))
-            {
-                await Clients.Clients(connections.ToList()).SendAsync("CallEnded");
-            }
         }
     }
 }

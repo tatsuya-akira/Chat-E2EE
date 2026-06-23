@@ -97,41 +97,5 @@ namespace Hermes.Server.Controllers
             var chats = await connection.QueryAsync<ChatListResponse>(query, new { UserId = userId });
             return Ok(chats);
         }
-
-        [HttpGet("{conversationId}/public-keys")]
-        public async Task<IActionResult> GetParticipantPublicKeys(int conversationId)
-        {
-            using var connection = new MySqlConnection(ConnectionString);
-
-            // Câu truy vấn lấy Public Key của tất cả user đang nằm trong Conversation này
-            string query = @"
-        SELECT u.Id as UserId, u.PublicKey 
-        FROM PARTICIPANTS p
-        JOIN USERS u ON p.UserId = u.Id
-        WHERE p.ConversationId = @ConvId";
-
-            var keys = await connection.QueryAsync(query, new { ConvId = conversationId });
-
-            // Trả về một Dictionary dạng { "UserId": "PublicKey_Base64" }
-            var result = keys.ToDictionary(k => (string)k.UserId, k => (string)k.PublicKey);
-
-            return Ok(result);
-        }
-        [HttpGet("history/{conversationId}/{userId}")]
-        public async Task<IActionResult> GetChatHistory(int conversationId, string userId)
-        {
-            using var connection = new MySqlConnection(ConnectionString);
-
-            string query = @"
-        SELECT m.SenderId, i.FullName as SenderName, m.CipherText as Content, m.SentAt as Time, mr.EncryptedSessionKey
-        FROM MESSAGES m
-        JOIN USERINFO i ON m.SenderId = i.UserId
-        JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId
-        WHERE m.ConversationId = @ConvId AND mr.RecipientId = @UserId
-        ORDER BY m.SentAt ASC";
-
-            var history = await connection.QueryAsync(query, new { ConvId = conversationId, UserId = userId });
-            return Ok(history);
-        }
     }
 }
