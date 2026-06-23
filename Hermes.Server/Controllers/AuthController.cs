@@ -68,19 +68,5 @@ namespace Hermes.Server.Controllers
             if (keys == null) return NotFound();
             return Ok(keys);
         }
-        [HttpPut("update-keys")]
-        public async Task<IActionResult> UpdateKeys([FromBody] Hermes.Shared.DTOs.UpdateKeyRequest request)
-        {
-            using var connection = new MySqlConnection(ConnectionString);
-            string query = @"
-                UPDATE USERS 
-                SET PublicKey = @PublicKey, WrappedPrivateKey = @WrappedPrivateKey, Salt = @Salt 
-                WHERE Id = @UserId";
-
-            int rowsAffected = await connection.ExecuteAsync(query, request);
-
-            if (rowsAffected > 0) return Ok();
-            return BadRequest("Không tìm thấy tài khoản để cập nhật khóa.");
-        }
     }
 }

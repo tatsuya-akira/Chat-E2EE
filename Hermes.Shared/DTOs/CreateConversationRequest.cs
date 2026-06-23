@@ -6,6 +6,6 @@ namespace Hermes.Shared.DTOs
     {
         public bool IsGroup { get; set; }
         public string? GroupName { get; set; }
-        public List<string>? ParticipantIds { get; set; }
+        public List<string> ParticipantIds { get; set; }
     }
 }

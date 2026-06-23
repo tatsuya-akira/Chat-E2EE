@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
 
-namespace Hermes.UI.Converters
+namespace Hermes.Converters
 {
     public class BooleanToVisibilityInverseConverter : IValueConverter
     {

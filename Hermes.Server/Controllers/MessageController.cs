@@ -2,8 +2,6 @@
 using MySqlConnector;
 using Dapper;
 using Hermes.Shared.DTOs;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Configuration;
 
 namespace Hermes.Server.Controllers
 {
@@ -57,23 +55,21 @@ namespace Hermes.Server.Controllers
                 return StatusCode(500, "Lỗi khi lưu tin nhắn vào Database");
             }
         }
-        [HttpGet("history/{conversationId}/{userId}")]
-        public async Task<IActionResult> GetChatHistory(int conversationId, string userId)
+        // Lấy lịch sử tin nhắn của một cuộc trò chuyện
+        [HttpGet("history/{conversationId}")]
+        public async Task<IActionResult> GetChatHistory(int conversationId)
         {
             using var connection = new MySqlConnection(ConnectionString);
 
-            // Dùng DATE_FORMAT để ép MySQL trả về chữ (VD: 09:15 AM) thay vì kiểu DateTime, tránh lỗi cho C#
+            // Join bảng MESSAGES và USERINFO để lấy tên người gửi
             string query = @"
-                SELECT m.SenderId, i.FullName as SenderName, m.CipherText as Content, 
-                       DATE_FORMAT(m.SentAt, '%h:%i %p') as Time, 
-                       mr.EncryptedSessionKey
-                FROM MESSAGES m
-                JOIN USERINFO i ON m.SenderId = i.UserId
-                JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId
-                WHERE m.ConversationId = @ConvId AND mr.RecipientId = @UserId
-                ORDER BY m.SentAt ASC";
+        SELECT m.SenderId, i.FullName as SenderName, m.CipherText as Content, m.SentAt as Time
+        FROM MESSAGES m
+        JOIN USERINFO i ON m.SenderId = i.UserId
+        WHERE m.ConversationId = @ConvId
+        ORDER BY m.SentAt ASC";
 
-            var history = await connection.QueryAsync(query, new { ConvId = conversationId, UserId = userId });
+            var history = await connection.QueryAsync(query, new { ConvId = conversationId });
             return Ok(history);
         }
     }
