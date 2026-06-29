@@ -14,6 +14,15 @@ namespace Hermes.Server.Hubs
         // Lưu ngược ConnectionId -> UserId để dọn dẹp nhanh khi có người tắt app (Rớt mạng)
         private static readonly ConcurrentDictionary<string, string> _connectionUserMap = new();
 
+        public static List<string> GetUserConnections(string userId)
+        {
+            if (_userConnections.TryGetValue(userId, out var connections))
+            {
+                lock (connections) { return new List<string>(connections); }
+            }
+            return new List<string>();
+        }
+
         public async Task RegisterUser(string userId)
         {
             if (string.IsNullOrEmpty(userId)) return;
@@ -77,10 +86,10 @@ namespace Hermes.Server.Hubs
 
         // --- CÁC HÀM CŨ GIỮ NGUYÊN ---
         // Đổi tham số hàm SendMessage
-        public async Task SendMessage(string conversationId, string encryptedMessage, Dictionary<string, string> recipientKeys)
+        public async Task SendMessage(string conversationId, string encryptedMessage, Dictionary<string, string> recipientKeys, int timeToLive = 0, int messageId = 0)
         {
             // Bắn cả dictionary khóa qua mạng
-            await Clients.OthersInGroup(conversationId).SendAsync("ReceiveMessage", conversationId, encryptedMessage, recipientKeys);
+            await Clients.OthersInGroup(conversationId).SendAsync("ReceiveMessage", conversationId, encryptedMessage, recipientKeys, timeToLive, messageId);
         }
 
         public async Task InitiateCall(string receiverId, string myIp, int myPort)
@@ -135,6 +144,11 @@ namespace Hermes.Server.Hubs
             {
                 await Clients.Clients(connections.ToList()).SendAsync("CallEnded");
             }
+        }
+
+        public async Task NotifyDeleteMessage(string conversationId, int messageId)
+        {
+            await Clients.Group(conversationId).SendAsync("ReceiveMessageDeletion", conversationId, messageId);
         }
     }
 }

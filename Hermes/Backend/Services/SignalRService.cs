@@ -8,7 +8,7 @@ namespace Hermes.Backend.Services
     public class SignalRService
     {
         private HubConnection _connection;
-        public event Action<string, string, Dictionary<string, string>> OnReceiveMessage;
+        public event Action<string, string, Dictionary<string, string>, int, int> OnReceiveMessage;
         public event Action<string, string, int> OnIncomingCall;
         public event Action OnNewChatNotification;
         public event Action<string, string> OnReceiveWebRTCOffer; // Nhận lời mời (Kèm ID người gọi)
@@ -16,6 +16,7 @@ namespace Hermes.Backend.Services
         public event Action<string> OnReceiveIceCandidate;        // Nhận IP mặt tiền
         public event Action OnCallEnded;                          // Cúp máy
         public event Action<string, bool> OnUserStatusChanged;
+        public event Action<string, int> OnReceiveMessageDeletion;
 
         public SignalRService(string hubUrl)
         {
@@ -24,9 +25,9 @@ namespace Hermes.Backend.Services
                 .WithAutomaticReconnect() // Tự kết nối lại nếu rớt mạng
                 .Build();
 
-            _connection.On<string, string, Dictionary<string, string>>("ReceiveMessage", (conversationId, encryptedMessage, recipientKeys) =>
+            _connection.On<string, string, Dictionary<string, string>, int, int>("ReceiveMessage", (conversationId, encryptedMessage, recipientKeys, ttl, msgId) =>
             {
-                OnReceiveMessage?.Invoke(conversationId, encryptedMessage, recipientKeys);
+                OnReceiveMessage?.Invoke(conversationId, encryptedMessage, recipientKeys, ttl, msgId);
             });
 
             _connection.On<string, string, int>("IncomingCall", (callerId, ip, port) =>
@@ -38,6 +39,11 @@ namespace Hermes.Backend.Services
             _connection.On<string, bool>("UserStatusChanged", (userId, isOnline) =>
             {
                 OnUserStatusChanged?.Invoke(userId, isOnline);
+            });
+
+            _connection.On<string, int>("ReceiveMessageDeletion", (conversationId, messageId) =>
+            {
+                OnReceiveMessageDeletion?.Invoke(conversationId, messageId);
             });
             // 2. Thêm cái này vào trong Constructor để lắng nghe Server
             _connection.On("ReceiveNewChatNotification", () =>
@@ -71,11 +77,11 @@ namespace Hermes.Backend.Services
             }
         }
 
-        public async Task SendMessageAsync(string conversationId, string message, Dictionary<string, string> recipientKeys)
+        public async Task SendMessageAsync(string conversationId, string message, Dictionary<string, string> recipientKeys, int ttl = 0, int msgId = 0)
         {
             if (_connection.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected)
             {
-                await _connection.InvokeAsync("SendMessage", conversationId, message, recipientKeys);
+                await _connection.InvokeAsync("SendMessage", conversationId, message, recipientKeys, ttl, msgId);
             }
         }
 
@@ -112,5 +118,12 @@ namespace Hermes.Backend.Services
         public async Task SendWebRTCAnswerAsync(string targetId, string answer) => await _connection.InvokeAsync("SendWebRTCAnswer", targetId, answer);
         public async Task SendIceCandidateAsync(string targetId, string candidate) => await _connection.InvokeAsync("SendIceCandidate", targetId, candidate);
         public async Task EndCallAsync(string targetId) => await _connection.InvokeAsync("EndCall", targetId);
+        public async Task NotifyDeleteMessageAsync(string conversationId, int messageId)
+        {
+            if (_connection.State == HubConnectionState.Connected)
+            {
+                await _connection.InvokeAsync("NotifyDeleteMessage", conversationId, messageId);
+            }
+        }
     }
 }

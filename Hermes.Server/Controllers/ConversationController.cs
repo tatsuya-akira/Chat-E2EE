@@ -1,7 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 using Dapper;
 using Hermes.Shared.DTOs;
+using Microsoft.AspNetCore.SignalR;
+using Hermes.Server.Hubs;
 
 namespace Hermes.Server.Controllers
 {
@@ -10,9 +12,14 @@ namespace Hermes.Server.Controllers
     public class ConversationController : ControllerBase
     {
         private readonly IConfiguration _configuration;
+        private readonly IHubContext<ChatHub> _hubContext;
         private string ConnectionString => _configuration.GetConnectionString("DefaultConnection") ?? "";
 
-        public ConversationController(IConfiguration configuration) { _configuration = configuration; }
+        public ConversationController(IConfiguration configuration, IHubContext<ChatHub> hubContext) 
+        { 
+            _configuration = configuration; 
+            _hubContext = hubContext;
+        }
 
         // GET: api/Conversation/user/{identifier}
         [HttpGet("user/{identifier}")]
@@ -29,6 +36,22 @@ namespace Hermes.Server.Controllers
 
             if (user == null) return NotFound();
             return Ok(user);
+        }
+
+        // GET: api/Conversation/search-users?keyword=...
+        [HttpGet("search-users")]
+        public async Task<IActionResult> SearchUsers([FromQuery] string keyword)
+        {
+            if (string.IsNullOrWhiteSpace(keyword)) return Ok(new List<UserInfoResponse>());
+            using var connection = new MySqlConnection(ConnectionString);
+            string query = @"
+                SELECT u.Id as UserId, i.FullName 
+                FROM USERS u 
+                JOIN USERINFO i ON u.Id = i.UserId 
+                WHERE (u.Email LIKE @Kw OR i.FullName LIKE @Kw) AND u.Id != 'SYSTEM' LIMIT 15";
+
+            var users = await connection.QueryAsync<UserInfoResponse>(query, new { Kw = $"%{keyword.Trim()}%" });
+            return Ok(users);
         }
 
         // POST: api/Conversation
@@ -117,15 +140,99 @@ namespace Hermes.Server.Controllers
 
             return Ok(result);
         }
+        [HttpGet("username/{userId}")]
+        public async Task<IActionResult> GetUsername(string userId)
+        {
+            using var connection = new MySqlConnection(ConnectionString);
+            string query = "SELECT FullName FROM USERINFO WHERE UserId = @Uid LIMIT 1";
+            var name = await connection.QueryFirstOrDefaultAsync<string>(query, new { Uid = userId });
+            if (string.IsNullOrEmpty(name))
+            {
+                name = await connection.QueryFirstOrDefaultAsync<string>("SELECT Email FROM USERS WHERE Id = @Uid LIMIT 1", new { Uid = userId });
+            }
+            return Ok(name ?? userId);
+        }
+
+        [HttpPost("remove-participant")]
+        public async Task<IActionResult> RemoveParticipant([FromBody] RemoveParticipantRequest request)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(ConnectionString);
+                await connection.OpenAsync();
+
+                // Đảm bảo user SYSTEM tồn tại trong DB để tránh Foreign Key violation
+                await connection.ExecuteAsync(@"
+                    INSERT IGNORE INTO USERS (Id, Email, PublicKey, WrappedPrivateKey, Salt) VALUES ('SYSTEM', 'system@hermes.local', 'SYSTEM', 'SYSTEM', 'SYSTEM');
+                    INSERT IGNORE INTO USERINFO (UserId, FullName, AvatarUrl, StatusMessage) VALUES ('SYSTEM', 'Hệ thống', '', '');
+                ");
+
+                // Lấy thông tin nhóm và tên người dùng trước khi xóa
+                string userNameQuery = "SELECT FullName FROM USERINFO WHERE UserId = @Uid LIMIT 1";
+                string userName = await connection.QueryFirstOrDefaultAsync<string>(userNameQuery, new { Uid = request.UserId });
+                if (string.IsNullOrEmpty(userName)) userName = request.UserId;
+
+                // Lấy danh sách tất cả các thành viên TRƯỚC KHI XÓA để báo notification
+                var allParticipants = (await connection.QueryAsync<string>(
+                    "SELECT UserId FROM PARTICIPANTS WHERE ConversationId = @ConvId", 
+                    new { ConvId = request.ConversationId })).ToList();
+
+                // Thực hiện xóa thành viên khỏi PARTICIPANTS
+                int deleted = await connection.ExecuteAsync(
+                    "DELETE FROM PARTICIPANTS WHERE ConversationId = @ConvId AND UserId = @UserId",
+                    new { ConvId = request.ConversationId, UserId = request.UserId });
+
+                if (deleted > 0)
+                {
+                    // Tạo tin nhắn thông báo hệ thống
+                    string actionText = request.ActionType == "LEAVE" ? "đã rời khỏi nhóm" : "đã bị xóa khỏi nhóm";
+                    string msgText = $"⚠️ [Thông báo] {userName} {actionText}.";
+
+                    // Chèn tin nhắn hệ thống vào bảng MESSAGES
+                    int msgId = await connection.ExecuteScalarAsync<int>(
+                        "INSERT INTO MESSAGES (ConversationId, SenderId, CipherText, SentAt) VALUES (@ConvId, 'SYSTEM', @MsgText, NOW()); SELECT LAST_INSERT_ID();",
+                        new { ConvId = request.ConversationId, MsgText = msgText });
+
+                    // Chèn cho từng thành viên vào bảng MESSAGE_RECIPIENTS để GetChatHistory thấy được
+                    foreach (var uid in allParticipants)
+                    {
+                        await connection.ExecuteAsync(
+                            "INSERT INTO MESSAGE_RECIPIENTS (MessageId, RecipientId, EncryptedSessionKey) VALUES (@MsgId, @RecId, '')",
+                            new { MsgId = msgId, RecId = uid });
+                    }
+
+                    // Gửi SignalR tới group phòng chat
+                    await _hubContext.Clients.Group(request.ConversationId.ToString()).SendAsync("ReceiveMessage", request.ConversationId.ToString(), msgText, new Dictionary<string, string>(), 0, msgId);
+
+                    // Gửi ReceiveNewChatNotification cho toàn bộ thành viên cũ & mới để cập nhật danh sách hội thoại
+                    foreach (var uid in allParticipants)
+                    {
+                        var conns = ChatHub.GetUserConnections(uid);
+                        if (conns.Any())
+                        {
+                            await _hubContext.Clients.Clients(conns).SendAsync("ReceiveNewChatNotification");
+                            await _hubContext.Clients.Clients(conns).SendAsync("ReceiveMessage", request.ConversationId.ToString(), msgText, new Dictionary<string, string>(), 0, msgId);
+                        }
+                    }
+                }
+
+                return Ok();
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
+
         [HttpGet("history/{conversationId}/{userId}")]
         public async Task<IActionResult> GetChatHistory(int conversationId, string userId)
         {
             using var connection = new MySqlConnection(ConnectionString);
 
             string query = @"
-        SELECT m.SenderId, i.FullName as SenderName, m.CipherText as Content, m.SentAt as Time, mr.EncryptedSessionKey
+        SELECT m.Id as MessageId, m.SenderId, IFNULL(i.FullName, 'Hệ thống') as SenderName, m.CipherText as Content, DATE_FORMAT(m.SentAt, '%h:%i %p') as Time, mr.EncryptedSessionKey, m.TimeToLive
         FROM MESSAGES m
-        JOIN USERINFO i ON m.SenderId = i.UserId
+        LEFT JOIN USERINFO i ON m.SenderId = i.UserId
         JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId
         WHERE m.ConversationId = @ConvId AND mr.RecipientId = @UserId
         ORDER BY m.SentAt ASC";

@@ -30,6 +30,8 @@ namespace Hermes
         private CancellationTokenSource _searchCts;
         private ObservableCollection<SearchResultItem> _searchResults;
         private bool _isSearchPlaceholderVisible = true;
+        private int _currentTTL = 0;
+
         public ChatWindow()
         {
             InitializeComponent();
@@ -39,11 +41,24 @@ namespace Hermes
             // Khởi tạo search trước khi bất kỳ sự kiện nào fire
             InitializeSearch();
 
+            if (txtMessageInput != null)
+            {
+                txtMessageInput.PreviewKeyDown += (s, e) =>
+                {
+                    if (e.Key == System.Windows.Input.Key.Enter && (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Shift) == 0)
+                    {
+                        e.Handled = true;
+                        btnSendMessage_Click(s, new RoutedEventArgs());
+                    }
+                };
+            }
+
             // 1. Khởi tạo SignalR
             _signalRService = new SignalRService("http://100.67.94.18:5042/chathub");
 
             // 2. Lắng nghe sự kiện nhắn tin tới
             _signalRService.OnReceiveMessage += SignalR_OnReceiveMessage;
+            _signalRService.OnReceiveMessageDeletion += SignalR_OnReceiveMessageDeletion;
 
             // 3. Tự động Connect
             this.Loaded += async (s, e) => {
@@ -62,6 +77,10 @@ namespace Hermes
                     // GỌI LẠI HÀM TẢI DANH SÁCH CHAT
                     // Bỏ chữ 'await' đi vì hàm này là void
                     LoadRealChatsAsync();
+                    if (lstChats != null && lstChats.SelectedItem != null)
+                    {
+                        lstChats_SelectionChanged(lstChats, null);
+                    }
                 });
             };
             _webRTCService = new Hermes.Client.Services.WebRTCService();
@@ -149,7 +168,7 @@ namespace Hermes
             });
         }
         // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
-        private void SignalR_OnReceiveMessage(string conversationId, string cipherText, Dictionary<string, string> recipientKeys)
+        private void SignalR_OnReceiveMessage(string conversationId, string cipherText, Dictionary<string, string> recipientKeys, int ttl, int msgId)
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
@@ -157,10 +176,14 @@ namespace Hermes
                 if (targetChat != null)
                 {
                     string plainText = "[Tin nhắn mã hóa]";
+                    string senderName = "Friend";
 
-                    // --- BẮT ĐẦU GIẢI MÃ ---
-                    // Tìm chìa khóa AES của riêng mình trong cái rổ chìa khóa Server gửi về
-                    if (recipientKeys.TryGetValue(AuthService.CurrentUserId, out string myEncryptedSessionKey))
+                    if (cipherText.StartsWith("⚠️"))
+                    {
+                        plainText = cipherText;
+                        senderName = "Hệ thống";
+                    }
+                    else if (recipientKeys != null && recipientKeys.TryGetValue(AuthService.CurrentUserId, out string myEncryptedSessionKey))
                     {
                         try
                         {
@@ -169,21 +192,45 @@ namespace Hermes
                         }
                         catch { plainText = "[Lỗi giải mã E2EE]"; }
                     }
-                    // -----------------------
 
-                    targetChat.Messages.Add(new MessageModel
+                    var newMsg = new MessageModel
                     {
-                        SenderName = "Friend",
-                        Content = plainText, // Gán text đã giải mã thành công vào UI
+                        MessageId = msgId,
+                        SenderName = senderName,
+                        Content = plainText,
                         Time = DateTime.Now.ToString("hh:mm tt"),
-                        IsMine = false
-                    });
+                        IsMine = false,
+                        TimeToLive = ttl
+                    };
+                    targetChat.Messages.Add(newMsg);
+
+                    if (ttl > 0)
+                    {
+                        newMsg.StartCountdown(async (expiredMsg) =>
+                        {
+                            Application.Current.Dispatcher.Invoke(() => targetChat.Messages.Remove(expiredMsg));
+                            await Backend.Services.ApiClient.DeleteMessageAsync(expiredMsg.MessageId);
+                        });
+                    }
 
                     // Nếu phòng đó ĐANG ĐƯỢC MỞ trên màn hình, thì cuộn xuống
                     if (lstChats.SelectedItem is ChatModel currentChat && currentChat.ChatId == conversationId)
                     {
                         svMessages.ScrollToEnd();
                     }
+                }
+            });
+        }
+
+        private void SignalR_OnReceiveMessageDeletion(string conversationId, int messageId)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                var targetChat = Chats.FirstOrDefault(c => c.ChatId == conversationId);
+                if (targetChat != null)
+                {
+                    var msg = targetChat.Messages.FirstOrDefault(m => m.MessageId == messageId);
+                    if (msg != null) targetChat.Messages.Remove(msg);
                 }
             });
         }
@@ -200,7 +247,16 @@ namespace Hermes
                 .Select(c => c.ChatId));
             var toRemove = Chats.Where(ch => ch?.ChatId != null && !serverIds.Contains(ch.ChatId)).ToList();
             foreach (var obsolete in toRemove)
+            {
+                if (lstChats.SelectedItem == obsolete)
+                {
+                    lstChats.SelectedItem = null;
+                    if (GridWelcome != null) GridWelcome.Visibility = Visibility.Visible;
+                    if (GridChat != null) GridChat.Visibility = Visibility.Collapsed;
+                    CloseChatInfoPanel();
+                }
                 Chats.Remove(obsolete);
+            }
 
             // Bước 2: Thêm mới hoặc cập nhật từng chat từ server
             foreach (var c in myChats)
@@ -233,6 +289,11 @@ namespace Hermes
                 if (GridWelcome != null) GridWelcome.Visibility = Visibility.Collapsed;
                 if (GridChat != null) GridChat.Visibility = Visibility.Visible;
 
+                if (_infoPanelOpen)
+                {
+                    OpenChatInfoPanel();
+                }
+
                 selectedChat.Messages.Clear();
 
                 // Thay dòng gọi API cũ bằng dòng này
@@ -259,6 +320,20 @@ namespace Hermes
                     // -----------------------
 
                     selectedChat.Messages.Add(msg);
+
+                    if (msg.TimeToLive > 0)
+                    {
+                        msg.StartCountdown(async (expiredMsg) =>
+                        {
+                            Application.Current.Dispatcher.Invoke(() => selectedChat.Messages.Remove(expiredMsg));
+                            await Backend.Services.ApiClient.DeleteMessageAsync(expiredMsg.MessageId);
+                        });
+                    }
+                }
+
+                if (_infoPanelOpen)
+                {
+                    OpenChatInfoPanel();
                 }
             }
         }
@@ -404,7 +479,8 @@ namespace Hermes
                 string currentTime = DateTime.Now.ToString("hh:mm tt");
 
                 // 1. Cập nhật giao diện mượt mà (Vẫn hiển thị chữ thật cho người gửi xem)
-                currentChat.Messages.Add(new MessageModel { SenderName = "You", Content = plainText, Time = currentTime, IsMine = true });
+                var myMsg = new MessageModel { SenderName = "You", Content = plainText, Time = currentTime, IsMine = true, TimeToLive = _currentTTL };
+                currentChat.Messages.Add(myMsg);
                 currentChat.LastMessage = "You: " + plainText;
                 currentChat.LastMessageTime = currentTime;
                 txtMessageInput.Text = "";
@@ -416,13 +492,9 @@ namespace Hermes
                     if (!int.TryParse(currentChat.ChatId, out int convId)) return;
 
                     // --- BƯỚC MẬT MÃ HÓA ---
-                    // A. Sinh khóa phiên AES (Session Key) dùng một lần cho tin nhắn này
                     byte[] sessionKey = Backend.Services.CryptoService.GenerateRandomKey();
-
-                    // B. Mã hóa nội dung tin nhắn bằng khóa AES vừa tạo
                     string cipherText = Backend.Services.CryptoService.EncryptWithAES(plainText, sessionKey);
 
-                    // C. Lấy Public Key của tất cả thành viên trong phòng chat
                     var publicKeys = await Backend.Services.ApiClient.GetParticipantPublicKeysAsync(convId);
                     if (publicKeys.Count == 0)
                     {
@@ -430,40 +502,82 @@ namespace Hermes
                         return;
                     }
 
-                    // D. Bọc (Wrap) khóa AES bằng RSA Public Key của TỪNG NGƯỜI
                     var recipientKeys = new Dictionary<string, string>();
                     foreach (var pk in publicKeys)
                     {
-                        string userId = pk.Key;
-                        string publicKeyBase64 = pk.Value;
-
-                        recipientKeys[userId] = Backend.Services.CryptoService.EncryptSessionKeyWithRSA(sessionKey, publicKeyBase64);
+                        recipientKeys[pk.Key] = Backend.Services.CryptoService.EncryptSessionKeyWithRSA(sessionKey, pk.Value);
                     }
 
-                    // E. Gói toàn bộ dữ liệu mã hóa thành DTO
                     var dto = new Hermes.Shared.DTOs.SendMessageDto
                     {
                         ConversationId = convId,
                         SenderId = AuthService.CurrentUserId,
-                        CipherText = cipherText, // Gửi chuỗi mã hóa lên Server, tuyệt đối KHÔNG gửi plainText
-                        TimeToLive = 0,
-                        RecipientSessionKeys = recipientKeys // Các chìa khóa AES đã được khóa chặt bằng RSA
+                        CipherText = cipherText,
+                        TimeToLive = _currentTTL,
+                        RecipientSessionKeys = recipientKeys
                     };
 
-                    // Gọi API lưu tin nhắn an toàn xuống MySQL
-                    bool isSaved = await Backend.Services.ApiClient.SaveMessageAsync(dto);
+                    int savedMsgId = await Backend.Services.ApiClient.SaveMessageAsync(dto);
 
-                    if (isSaved)
+                    if (savedMsgId > 0)
                     {
+                        myMsg.MessageId = savedMsgId;
+                        if (_currentTTL > 0)
+                        {
+                            myMsg.StartCountdown(async (expiredMsg) =>
+                            {
+                                Application.Current.Dispatcher.Invoke(() => currentChat.Messages.Remove(expiredMsg));
+                                await Backend.Services.ApiClient.DeleteMessageAsync(expiredMsg.MessageId);
+                            });
+                        }
+
                         // 3. BẮN SIGNALR ĐỂ REAL-TIME
-                        // Phát trực tiếp đoạn mã hóa (cipherText) qua WebSocket cho máy bên kia
-                        // Truyền thêm recipientKeys vào
-                        await _signalRService.SendMessageAsync(currentChat.ChatId, cipherText, recipientKeys);
+                        await _signalRService.SendMessageAsync(currentChat.ChatId, cipherText, recipientKeys, _currentTTL, savedMsgId);
                     }
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Lỗi hệ thống khi mã hóa E2EE: {ex.Message}", "Lỗi Bảo Mật", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+        private void btnTTL_Click(object sender, RoutedEventArgs e)
+        {
+            if (popupTTL != null) popupTTL.IsOpen = !popupTTL.IsOpen;
+        }
+
+        private void TtlOption_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && int.TryParse(btn.Tag?.ToString(), out int ttl))
+            {
+                _currentTTL = ttl;
+                if (btnTTL != null)
+                {
+                    if (ttl == -1) btnTTL.Content = "🔥";
+                    else if (ttl > 0) btnTTL.Content = "⏳";
+                    else btnTTL.Content = "⏱️";
+                }
+                if (popupTTL != null) popupTTL.IsOpen = false;
+            }
+        }
+
+        private async void MessageBorder_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement element && element.DataContext is MessageModel msg)
+            {
+                if (msg.TimeToLive == -1 && !msg.IsMine)
+                {
+                    MessageBox.Show(msg.Content, "Tin nhắn xem 1 lần (đã tự hủy sau khi xem)", MessageBoxButton.OK, MessageBoxImage.Information);
+                    if (lstChats.SelectedItem is ChatModel currentChat)
+                    {
+                        currentChat.Messages.Remove(msg);
+                    }
+                    await Backend.Services.ApiClient.DeleteMessageAsync(msg.MessageId);
+                    if (lstChats.SelectedItem is ChatModel chat)
+                    {
+                        await _signalRService.NotifyDeleteMessageAsync(chat.ChatId, msg.MessageId);
+                    }
                 }
             }
         }
@@ -557,6 +671,10 @@ namespace Hermes
             // Nếu trống → đóng popup và thoát
             if (string.IsNullOrEmpty(keyword))
             {
+                _searchCts?.Cancel();
+                _searchResults?.Clear();
+                HideNoResult();
+                HideSearchStatus();
                 CloseSearchPopup();
                 return;
             }
@@ -578,42 +696,55 @@ namespace Hermes
                 if (token.IsCancellationRequested) return;
 
                 // Gọi API tìm kiếm
-                var userInfo = await Backend.Services.ApiClient.GetUserByIdentifierAsync(keyword);
+                var users = await Backend.Services.ApiClient.SearchUsersAsync(keyword);
                 if (token.IsCancellationRequested) return;
 
                 // Cập nhật UI trên Dispatcher thread
                 Dispatcher.Invoke(() =>
                 {
+                    if (token.IsCancellationRequested || string.IsNullOrWhiteSpace(txtSearch.Text))
+                    {
+                        _searchResults?.Clear();
+                        HideNoResult();
+                        HideSearchStatus();
+                        CloseSearchPopup();
+                        return;
+                    }
+
                     if (popupSearchResults == null || _searchResults == null) return;
 
                     _searchResults.Clear();
 
-                    if (userInfo != null)
+                    if (users != null && users.Any())
                     {
-                        // UserInfoResponse chỉ có UserId và FullName
-                        string displayName = !string.IsNullOrWhiteSpace(userInfo.FullName)
-                            ? userInfo.FullName
-                            : userInfo.UserId ?? "Người dùng";
-
-                        string initials = displayName.Length > 0
-                            ? displayName.Substring(0, 1).ToUpper()
-                            : "?";
-
-                        // Tạo màu avatar ngẫu nhiên dựa trên hash của tên
                         string[] palette = { "#3B82F6", "#8B5CF6", "#EC4899", "#10B981", "#F59E0B", "#EF4444" };
-                        string avatarColor = palette[Math.Abs(displayName.GetHashCode()) % palette.Length];
-
-                        _searchResults.Add(new SearchResultItem
+                        foreach (var u in users)
                         {
-                            UserId      = userInfo.UserId ?? "",
-                            DisplayName = displayName,
-                            Identifier  = userInfo.UserId ?? keyword,   // Hiển thị identifier nhập vào
-                            Initials    = initials,
-                            AvatarColor = avatarColor
-                        });
+                            if (u.UserId == AuthService.CurrentUserId) continue; // Ẩn chính mình
+                            string displayName = !string.IsNullOrWhiteSpace(u.FullName) ? u.FullName : u.UserId ?? "Người dùng";
+                            string initials = displayName.Length > 0 ? displayName.Substring(0, 1).ToUpper() : "?";
+                            string avatarColor = palette[Math.Abs(displayName.GetHashCode()) % palette.Length];
 
-                        HideNoResult();
-                        HideSearchStatus();
+                            _searchResults.Add(new SearchResultItem
+                            {
+                                UserId = u.UserId ?? "",
+                                DisplayName = displayName,
+                                Identifier = u.UserId ?? keyword,
+                                Initials = initials,
+                                AvatarColor = avatarColor
+                            });
+                        }
+
+                        if (_searchResults.Any())
+                        {
+                            HideNoResult();
+                            HideSearchStatus();
+                        }
+                        else
+                        {
+                            ShowNoResult();
+                            HideSearchStatus();
+                        }
                     }
                     else
                     {
@@ -712,7 +843,7 @@ namespace Hermes
                 txtSearch.Foreground = System.Windows.Media.Brushes.Black;
 
             // Nếu đang có kết quả → hiện lại popup
-            if (_searchResults != null && _searchResults.Count > 0)
+            if (_searchResults != null && _searchResults.Count > 0 && txtSearch != null && !string.IsNullOrWhiteSpace(txtSearch.Text))
                 EnsurePopupOpen();
         }
 
@@ -790,6 +921,9 @@ namespace Hermes
 
         private void CloseSearchPopup()
         {
+            HideNoResult();
+            HideSearchStatus();
+            if (txtSearch != null && string.IsNullOrWhiteSpace(txtSearch.Text)) _searchResults?.Clear();
             if (popupSearchResults != null)
                 popupSearchResults.IsOpen = false;
         }
@@ -829,6 +963,231 @@ namespace Hermes
             if (txtSearchPlaceholder != null)
                 txtSearchPlaceholder.Visibility = Visibility.Visible;
             txtSearch.Foreground = System.Windows.Media.Brushes.Gray;
+            HideNoResult();
+            HideSearchStatus();
+            CloseSearchPopup();
+        }
+
+        // ===== EMOJI PICKER =====
+
+        private void btnEmoji_Click(object sender, RoutedEventArgs e)
+        {
+            if (popupEmoji == null) return;
+            popupEmoji.IsOpen = !popupEmoji.IsOpen;
+        }
+
+        private void EmojiItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn) return;
+            string emoji = btn.Tag?.ToString() ?? btn.Content?.ToString() ?? string.Empty;
+            if (string.IsNullOrEmpty(emoji)) return;
+
+            if (txtMessageInput != null)
+            {
+                int caretIndex = txtMessageInput.CaretIndex;
+                txtMessageInput.Text = txtMessageInput.Text.Insert(caretIndex, emoji);
+                txtMessageInput.CaretIndex = caretIndex + emoji.Length;
+                txtMessageInput.Focus();
+            }
+
+            if (popupEmoji != null) popupEmoji.IsOpen = false;
+        }
+
+        // ===== CHAT INFO PANEL =====
+
+        /// <summary>
+        /// Helper ViewModel cho danh sách thành viên trong panel info.
+        /// </summary>
+        private class MemberItem
+        {
+            public string UserId      { get; set; } = string.Empty;
+            public string DisplayName { get; set; } = string.Empty;
+            public string Initials    { get; set; } = string.Empty;
+            public Visibility KickVisibility { get; set; } = Visibility.Visible;
+        }
+
+        private bool _infoPanelOpen = false;
+
+        private void btnChatInfo_Click(object sender, RoutedEventArgs e)
+        {
+            if (_infoPanelOpen)
+            {
+                CloseChatInfoPanel();
+            }
+            else
+            {
+                OpenChatInfoPanel();
+            }
+        }
+
+        private void btnCloseChatInfo_Click(object sender, RoutedEventArgs e)
+        {
+            CloseChatInfoPanel();
+        }
+
+        private async void OpenChatInfoPanel()
+        {
+            if (pnlChatInfo == null || colInfoPanel == null) return;
+
+            // Lấy chat đang chọn để điền thông tin
+            if (lstChats?.SelectedItem is not ChatModel chat) return;
+
+            // Điền ID
+            if (txtInfoChatId != null)
+                txtInfoChatId.Text = chat.ChatId;
+
+            // Loại hội thoại
+            bool isGroup = chat.Initials == "G";
+            if (txtInfoChatType != null)
+                txtInfoChatType.Text = isGroup ? "Nhóm trò chuyện" : "Trò chuyện cá nhân";
+
+            // Thành viên: chỉ hiện nếu là nhóm
+            if (pnlInfoMembers != null)
+                pnlInfoMembers.Visibility = isGroup ? Visibility.Visible : Visibility.Collapsed;
+
+            if (btnLeaveGroup != null)
+                btnLeaveGroup.Visibility = isGroup ? Visibility.Visible : Visibility.Collapsed;
+
+            // Nếu là nhóm, tải danh sách thành viên thực sự từ server
+            if (isGroup && icInfoMembers != null)
+            {
+                icInfoMembers.ItemsSource = new System.Collections.Generic.List<MemberItem>
+                {
+                    new MemberItem { DisplayName = "⏳ Đang tải thành viên...", Initials = "...", KickVisibility = Visibility.Collapsed }
+                };
+
+                if (int.TryParse(chat.ChatId, out int convId))
+                {
+                    try
+                    {
+                        var keysMap = await Backend.Services.ApiClient.GetParticipantPublicKeysAsync(convId);
+                        var members = new System.Collections.Generic.List<MemberItem>();
+
+                        foreach (var uid in keysMap.Keys)
+                        {
+                            string name;
+                            bool isMe = (uid == AuthService.CurrentUserId);
+                            if (isMe)
+                            {
+                                name = (AuthService.CurrentFullName ?? "Bạn") + " (Bạn)";
+                            }
+                            else
+                            {
+                                name = await Backend.Services.ApiClient.GetUsernameAsync(uid);
+                                if (string.IsNullOrEmpty(name) || name == "Unknown")
+                                    name = uid;
+                            }
+
+                            string init = !string.IsNullOrEmpty(name) ? name.Substring(0, 1).ToUpper() : "?";
+                            members.Add(new MemberItem { 
+                                UserId = uid, 
+                                DisplayName = name, 
+                                Initials = init,
+                                KickVisibility = isMe ? Visibility.Collapsed : Visibility.Visible
+                            });
+                        }
+
+                        icInfoMembers.ItemsSource = members;
+                    }
+                    catch
+                    {
+                        icInfoMembers.ItemsSource = new System.Collections.Generic.List<MemberItem>
+                        {
+                            new MemberItem { DisplayName = "Bạn (Admin)", Initials = AuthService.CurrentFullName?.Substring(0, 1).ToUpper() ?? "A", KickVisibility = Visibility.Collapsed }
+                        };
+                    }
+                }
+            }
+
+            // Mở panel
+            pnlChatInfo.Visibility = Visibility.Visible;
+            colInfoPanel.Width = new GridLength(280);
+            _infoPanelOpen = true;
+        }
+
+        private void CloseChatInfoPanel()
+        {
+            if (pnlChatInfo == null || colInfoPanel == null) return;
+            pnlChatInfo.Visibility = Visibility.Collapsed;
+            colInfoPanel.Width = new GridLength(0);
+            _infoPanelOpen = false;
+        }
+
+        private void MemberInfo_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem mi && mi.CommandParameter is MemberItem member)
+            {
+                MessageBox.Show($"Tài khoản: {member.DisplayName}\nID: {member.UserId}", "Thông tin thành viên", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        private async void MemberKick_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem mi && mi.CommandParameter is MemberItem member)
+            {
+                if (lstChats?.SelectedItem is not ChatModel chat || !int.TryParse(chat.ChatId, out int convId)) return;
+
+                var res = MessageBox.Show($"Bạn có chắc chắn muốn xóa «{member.DisplayName}» khỏi nhóm?", "Xác nhận xóa thành viên", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (res == MessageBoxResult.Yes)
+                {
+                    bool success = await Backend.Services.ApiClient.RemoveParticipantAsync(convId, member.UserId, "KICK");
+                    if (success)
+                    {
+                        OpenChatInfoPanel();
+                        lstChats_SelectionChanged(lstChats, null);
+                    }
+                    else
+                    {
+                        MessageBox.Show("Đã xảy ra lỗi khi xóa thành viên.", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+            }
+        }
+
+        private async void btnLeaveGroup_Click(object sender, RoutedEventArgs e)
+        {
+            if (lstChats?.SelectedItem is not ChatModel chat || !int.TryParse(chat.ChatId, out int convId)) return;
+
+            var res = MessageBox.Show("Bạn có chắc chắn muốn rời khỏi nhóm này không?", "Xác nhận rời nhóm", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (res == MessageBoxResult.Yes)
+            {
+                bool success = await Backend.Services.ApiClient.RemoveParticipantAsync(convId, AuthService.CurrentUserId, "LEAVE");
+                if (success)
+                {
+                    CloseChatInfoPanel();
+                    LoadRealChatsAsync();
+                }
+                else
+                {
+                    MessageBox.Show("Đã xảy ra lỗi khi rời nhóm.", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Xóa chat từ nút trong Info Panel — tái sử dụng logic giống nút xóa trong ContextMenu.
+        /// </summary>
+        private void btnInfoDeleteChat_Click(object sender, RoutedEventArgs e)
+        {
+            if (lstChats?.SelectedItem is not ChatModel chatToDelete) return;
+            if (Chats == null) return;
+
+            var confirm = MessageBox.Show(
+                $"Bạn có chắc muốn xóa cuộc trò chuyện «{chatToDelete.ChatName}» khỏi danh sách?\n\n" +
+                "Lịch sử tin nhắn được mã hóa E2EE vẫn được giữ an toàn trên server.",
+                "Xác nhận xóa",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            CloseChatInfoPanel();
+
+            if (GridWelcome != null) GridWelcome.Visibility = Visibility.Visible;
+            if (GridChat    != null) GridChat.Visibility    = Visibility.Collapsed;
+            lstChats.SelectedItem = null;
+
+            Chats.Remove(chatToDelete);
         }
     }
 

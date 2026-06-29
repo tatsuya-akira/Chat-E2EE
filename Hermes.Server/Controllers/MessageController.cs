@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 using Dapper;
 using Hermes.Shared.DTOs;
@@ -64,17 +64,26 @@ namespace Hermes.Server.Controllers
 
             // Dùng DATE_FORMAT để ép MySQL trả về chữ (VD: 09:15 AM) thay vì kiểu DateTime, tránh lỗi cho C#
             string query = @"
-                SELECT m.SenderId, i.FullName as SenderName, m.CipherText as Content, 
+                SELECT m.Id as MessageId, m.SenderId, IFNULL(i.FullName, 'Hệ thống') as SenderName, m.CipherText as Content, 
                        DATE_FORMAT(m.SentAt, '%h:%i %p') as Time, 
-                       mr.EncryptedSessionKey
+                       mr.EncryptedSessionKey, m.TimeToLive
                 FROM MESSAGES m
-                JOIN USERINFO i ON m.SenderId = i.UserId
+                LEFT JOIN USERINFO i ON m.SenderId = i.UserId
                 JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId
                 WHERE m.ConversationId = @ConvId AND mr.RecipientId = @UserId
                 ORDER BY m.SentAt ASC";
 
             var history = await connection.QueryAsync(query, new { ConvId = conversationId, UserId = userId });
             return Ok(history);
+        }
+
+        [HttpDelete("{messageId}")]
+        public async Task<IActionResult> DeleteMessage(int messageId)
+        {
+            using var connection = new MySqlConnection(ConnectionString);
+            await connection.ExecuteAsync("DELETE FROM MESSAGE_RECIPIENTS WHERE MessageId = @Id", new { Id = messageId });
+            await connection.ExecuteAsync("DELETE FROM MESSAGES WHERE Id = @Id", new { Id = messageId });
+            return Ok();
         }
     }
 }

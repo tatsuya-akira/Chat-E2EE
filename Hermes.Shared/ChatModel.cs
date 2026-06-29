@@ -6,15 +6,96 @@ namespace Hermes.Shared.Models
 {
     public class MessageModel : INotifyPropertyChanged
     {
+        public int MessageId { get; set; }
         public string? EncryptedSessionKey { get; set; }
         public string? SenderId { get; set; }
         public string? SenderName { get; set; }
-        public string? Content { get; set; }
+
+        private string? _content;
+        public string? Content
+        {
+            get => _content;
+            set
+            {
+                if (_content != value)
+                {
+                    _content = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(DisplayContent));
+                }
+            }
+        }
+
         public string? Time { get; set; }
         public bool IsMine { get; set; }
 
+        private int _timeToLive = 0;
+        public int TimeToLive
+        {
+            get => _timeToLive;
+            set
+            {
+                if (_timeToLive != value)
+                {
+                    _timeToLive = value;
+                    if (_remainingTime == 0)
+                    {
+                        RemainingTime = value;
+                    }
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(DisplayContent));
+                }
+            }
+        }
+
+        private int _remainingTime;
+        public int RemainingTime
+        {
+            get => _remainingTime;
+            set
+            {
+                if (_remainingTime != value)
+                {
+                    _remainingTime = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(DisplayContent));
+                }
+            }
+        }
+
+        public string DisplayContent
+        {
+            get
+            {
+                if (TimeToLive == -1)
+                {
+                    return IsMine ? $"🔒 [Xem 1 lần] {Content}" : "🔒 [Tin nhắn xem 1 lần - Nhấn vào đây để xem]";
+                }
+                if (TimeToLive > 0)
+                {
+                    return $"{Content}\n⏳ Tự hủy sau: {RemainingTime}s";
+                }
+                return Content ?? "";
+            }
+        }
+
+        public void StartCountdown(System.Action<MessageModel> onExpired)
+        {
+            if (TimeToLive <= 0) return;
+            RemainingTime = TimeToLive;
+            System.Threading.Tasks.Task.Run(async () =>
+            {
+                while (RemainingTime > 0)
+                {
+                    await System.Threading.Tasks.Task.Delay(1000);
+                    RemainingTime--;
+                }
+                onExpired?.Invoke(this);
+            });
+        }
+
         public event PropertyChangedEventHandler? PropertyChanged;
-        protected void OnPropertyChanged([CallerMemberName] string name = null)
+        protected void OnPropertyChanged([CallerMemberName] string? name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
