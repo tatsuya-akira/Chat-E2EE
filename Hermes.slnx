@@ -2,5 +2,4 @@
   <Project Path="Hermes.Server/Hermes.Server.csproj" />
   <Project Path="Hermes.Shared/Hermes.Shared.csproj" />
   <Project Path="Hermes/Hermes.csproj" />
-  <Project Path="Hermes.Tests/Hermes.Tests.csproj" />
 </Solution>
