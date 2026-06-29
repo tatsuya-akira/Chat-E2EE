@@ -1,12 +1,17 @@
-﻿using Hermes.Backend.Services;
+// Standardized to production level
+// Purpose: ChatWindow code-behind – real-time chat + live user search
+// Dependencies: Backend.Services, Hermes.Shared.Models, SignalRService, WebRTCService
+using Hermes.Backend.Services;
 using Hermes.Shared.Models;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Collections.Generic;
 using Hermes.Client.Services;
 
 namespace Hermes
@@ -20,11 +25,19 @@ namespace Hermes
         private string _incomingOffer;       // Lưu Lời mời khi người khác gọi tới
         private bool _isInCall = false;
         private bool _isRinging = false;
+
+        // ===== SEARCH FIELDS =====
+        private CancellationTokenSource _searchCts;
+        private ObservableCollection<SearchResultItem> _searchResults;
+        private bool _isSearchPlaceholderVisible = true;
         public ChatWindow()
         {
             InitializeComponent();
             Chats = new ObservableCollection<ChatModel>();
             lstChats.ItemsSource = Chats;
+
+            // Khởi tạo search trước khi bất kỳ sự kiện nào fire
+            InitializeSearch();
 
             // 1. Khởi tạo SignalR
             _signalRService = new SignalRService("http://100.67.94.18:5042/chathub");
@@ -178,24 +191,39 @@ namespace Hermes
         private async void LoadRealChatsAsync()
         {
             var myChats = await Backend.Services.ApiClient.GetMyChatsAsync(AuthService.CurrentUserId);
-            Chats.Clear();
+            if (myChats == null) return;
 
+            // --- GỘP (MERGE) thay vì Clear + Add toàn bộ ---
+            // Bước 1: Xóa các chat không còn trên server
+            var serverIds = new HashSet<string>(myChats
+                .Where(c => c?.ChatId != null)
+                .Select(c => c.ChatId));
+            var toRemove = Chats.Where(ch => ch?.ChatId != null && !serverIds.Contains(ch.ChatId)).ToList();
+            foreach (var obsolete in toRemove)
+                Chats.Remove(obsolete);
+
+            // Bước 2: Thêm mới hoặc cập nhật từng chat từ server
             foreach (var c in myChats)
             {
-                string displayName = c.IsGroup ? c.GroupName : c.OtherUserName;
-                Chats.Add(new ChatModel
+                if (c == null || string.IsNullOrEmpty(c.ChatId)) continue;
+
+                string displayName = c.IsGroup ? (c.GroupName ?? "") : (c.OtherUserName ?? "");
+                var incoming = new ChatModel
                 {
-                    ChatId = c.ChatId,
-                    ChatName = displayName,
-                    Initials = c.IsGroup ? "G" : (string.IsNullOrEmpty(displayName) ? "" : displayName.Substring(0, 1).ToUpper()),
-                    AvatarColor = c.IsGroup ? "#10B981" : "#F59E0B",
-                    LastMessage = "Bấm để xem tin nhắn...",
+                    ChatId          = c.ChatId,
+                    ChatName        = displayName,
+                    Initials        = c.IsGroup ? "G" : (string.IsNullOrEmpty(displayName) ? "" : displayName.Substring(0, 1).ToUpper()),
+                    AvatarColor     = c.IsGroup ? "#10B981" : "#F59E0B",
+                    LastMessage     = "Bấm để xem tin nhắn...",
                     LastMessageTime = ""
-                });
+                };
+
+                AddOrUpdateChat(incoming, joinRoom: false);
                 await _signalRService.JoinRoomAsync(c.ChatId);
             }
 
-            if (Chats.Any()) lstChats.SelectedIndex = 0;
+            if (Chats.Any() && lstChats.SelectedIndex < 0)
+                lstChats.SelectedIndex = 0;
         }
 
         private async void lstChats_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -242,6 +270,89 @@ namespace Hermes
             sw.ShowDialog();
         }
 
+        /// <summary>
+        /// Wire up MenuItem.Click khi ContextMenu mở ra – bắt buộc phải làm trong code-behind
+        /// vì Click= trực tiếp trong XAML Style/ContextMenu scope gây InvalidCastException tại InitializeComponent.
+        /// </summary>
+        private void lstChats_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            // Duyệt lên visual tree để tìm ListBoxItem chứa ContextMenu
+            var source = e.OriginalSource as DependencyObject;
+            while (source != null && !(source is System.Windows.Controls.ListBoxItem))
+                source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+
+            if (source is not System.Windows.Controls.ListBoxItem lbi) return;
+            if (lbi.ContextMenu is not ContextMenu ctxMenu) return;
+
+            // Đảm bảo DataContext của ContextMenu khớp với item
+            ctxMenu.DataContext = lbi.DataContext;
+            ctxMenu.PlacementTarget = lbi;
+
+            foreach (var obj in ctxMenu.Items)
+            {
+                if (obj is MenuItem mi)
+                {
+                    // Re-attach tránh duplicate subscription
+                    mi.Click -= menuDeleteChat_Click;
+                    mi.Click += menuDeleteChat_Click;
+                    // Gán Tag trực tiếp = DataContext của ListBoxItem (ChatModel)
+                    mi.Tag = lbi.DataContext;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Xóa đoạn chat khỏi danh sách hiển thị (chuột phải → Xóa đoạn chat).
+        /// Chỉ xóa trên UI – không gọi API xóa dữ liệu server (an toàn cho E2EE).
+        /// </summary>
+        private void menuDeleteChat_Click(object sender, RoutedEventArgs e)
+
+        {
+            // NULL GUARD
+            if (sender is not System.Windows.Controls.MenuItem menuItem) return;
+            if (Chats == null) return;
+
+            // Lấy ChatModel từ DataContext của item (Tag bind đến DataContext)
+            ChatModel chatToDelete = null;
+
+            // MenuItem.Tag = {Binding} → DataContext của ListBoxItem
+            if (menuItem.Tag is ChatModel tagModel)
+            {
+                chatToDelete = tagModel;
+            }
+            else
+            {
+                // Fallback: lấy từ ContextMenu.PlacementTarget → ListBoxItem → DataContext
+                if (menuItem.Parent is ContextMenu ctxMenu &&
+                    ctxMenu.PlacementTarget is System.Windows.Controls.ListBoxItem lbi &&
+                    lbi.DataContext is ChatModel lbiModel)
+                {
+                    chatToDelete = lbiModel;
+                }
+            }
+
+            if (chatToDelete == null) return;
+
+            var confirm = MessageBox.Show(
+                $"Bạn có chắc muốn xóa cuộc trò chuyện «{chatToDelete.ChatName}» khỏi danh sách?\n\n" +
+                "Lịch sử tin nhắn được mã hóa E2EE vẫn được giữ an toàn trên server.",
+                "Xác nhận xóa",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            // Nếu đang xem chat đó → reset về màn hình chào
+            if (lstChats?.SelectedItem is ChatModel selected && selected.ChatId == chatToDelete.ChatId)
+            {
+                if (GridWelcome != null) GridWelcome.Visibility = Visibility.Visible;
+                if (GridChat    != null) GridChat.Visibility    = Visibility.Collapsed;
+                lstChats.SelectedItem = null;
+            }
+
+            Chats.Remove(chatToDelete);
+        }
+
         private async void btnAddChat_Click(object sender, RoutedEventArgs e)
         {
             CreateChatWindow createChat = new CreateChatWindow();
@@ -263,15 +374,16 @@ namespace Hermes
 
                     var newChat = new ChatModel
                     {
-                        ChatId = newConvId.ToString(),
-                        ChatName = newChatName,
-                        Initials = createChat.IsGroup ? "G" : (newChatName.Length > 0 ? newChatName.Substring(0, 1).ToUpper() : ""),
-                        AvatarColor = createChat.IsGroup ? "#10B981" : "#F59E0B",
-                        LastMessage = "Bắt đầu cuộc trò chuyện...",
+                        ChatId          = newConvId.ToString(),
+                        ChatName        = newChatName,
+                        Initials        = createChat.IsGroup ? "G" : (newChatName.Length > 0 ? newChatName.Substring(0, 1).ToUpper() : ""),
+                        AvatarColor     = createChat.IsGroup ? "#10B981" : "#F59E0B",
+                        LastMessage     = "Bắt đầu cuộc trò chuyện...",
                         LastMessageTime = DateTime.Now.ToString("hh:mm tt")
                     };
-                    Chats.Insert(0, newChat);
-                    lstChats.SelectedItem = newChat;
+                    // DEDUP: chỉ thêm nếu ChatId chưa tồn tại trong danh sách
+                    var inserted = AddOrUpdateChat(newChat, joinRoom: false);
+                    if (inserted != null) lstChats.SelectedItem = inserted;
                     await _signalRService.SendNewChatNotificationAsync(userIds);
                 }
                 catch (Exception ex)
@@ -409,5 +521,326 @@ namespace Hermes
             // Tự dọn dẹp máy mình
             await HandleEndCallLogic();
         }
+
+        // ===================================================================
+        // ===== LIVE USER SEARCH – LOGIC TÌM KIẾM NGƯỜI DÙNG REAL-TIME =====
+        // ===================================================================
+
+        /// <summary>
+        /// Khởi tạo datasource cho search results – gọi 1 lần sau InitializeComponent
+        /// </summary>
+        private void InitializeSearch()
+        {
+            _searchResults = new ObservableCollection<SearchResultItem>();
+            if (lstSearchResults != null)
+                lstSearchResults.ItemsSource = _searchResults;
+        }
+
+        /// <summary>
+        /// Sự kiện TextChanged – debounce 400ms để tránh spam API
+        /// CRITICAL: Luôn kiểm tra null trước khi truy cập UI controls
+        /// </summary>
+        private async void txtSearch_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            // NULL GUARD – TextChanged có thể fire trước khi XAML render xong
+            if (txtSearch == null || popupSearchResults == null ||
+                lstSearchResults == null || _searchResults == null)
+                return;
+
+            string keyword = txtSearch.Text?.Trim() ?? string.Empty;
+
+            // Quản lý placeholder
+            if (txtSearchPlaceholder != null)
+                txtSearchPlaceholder.Visibility = string.IsNullOrEmpty(keyword)
+                    ? Visibility.Visible : Visibility.Collapsed;
+
+            // Nếu trống → đóng popup và thoát
+            if (string.IsNullOrEmpty(keyword))
+            {
+                CloseSearchPopup();
+                return;
+            }
+
+            // Hủy request cũ nếu đang chạy (debounce)
+            _searchCts?.Cancel();
+            _searchCts?.Dispose();
+            _searchCts = new CancellationTokenSource();
+            var token = _searchCts.Token;
+
+            // Hiện trạng thái "đang tìm..."
+            ShowSearchStatus("🔍 Đang tìm kiếm...");
+            EnsurePopupOpen();
+
+            try
+            {
+                // Debounce 400ms
+                await Task.Delay(400, token);
+                if (token.IsCancellationRequested) return;
+
+                // Gọi API tìm kiếm
+                var userInfo = await Backend.Services.ApiClient.GetUserByIdentifierAsync(keyword);
+                if (token.IsCancellationRequested) return;
+
+                // Cập nhật UI trên Dispatcher thread
+                Dispatcher.Invoke(() =>
+                {
+                    if (popupSearchResults == null || _searchResults == null) return;
+
+                    _searchResults.Clear();
+
+                    if (userInfo != null)
+                    {
+                        // UserInfoResponse chỉ có UserId và FullName
+                        string displayName = !string.IsNullOrWhiteSpace(userInfo.FullName)
+                            ? userInfo.FullName
+                            : userInfo.UserId ?? "Người dùng";
+
+                        string initials = displayName.Length > 0
+                            ? displayName.Substring(0, 1).ToUpper()
+                            : "?";
+
+                        // Tạo màu avatar ngẫu nhiên dựa trên hash của tên
+                        string[] palette = { "#3B82F6", "#8B5CF6", "#EC4899", "#10B981", "#F59E0B", "#EF4444" };
+                        string avatarColor = palette[Math.Abs(displayName.GetHashCode()) % palette.Length];
+
+                        _searchResults.Add(new SearchResultItem
+                        {
+                            UserId      = userInfo.UserId ?? "",
+                            DisplayName = displayName,
+                            Identifier  = userInfo.UserId ?? keyword,   // Hiển thị identifier nhập vào
+                            Initials    = initials,
+                            AvatarColor = avatarColor
+                        });
+
+                        HideNoResult();
+                        HideSearchStatus();
+                    }
+                    else
+                    {
+                        ShowNoResult();
+                        HideSearchStatus();
+                    }
+
+                    EnsurePopupOpen();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                // Bị hủy do người dùng tiếp tục gõ – bình thường, bỏ qua
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ShowSearchStatus($"⚠ Lỗi tìm kiếm: {ex.Message}");
+                    HideNoResult();
+                });
+            }
+        }
+
+        /// <summary>
+        /// Khi người dùng chọn một kết quả trong danh sách gợi ý
+        /// → Tự động mở/tạo cuộc trò chuyện 1-1 với người đó
+        /// </summary>
+        private async void lstSearchResults_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (lstSearchResults == null) return;
+            if (lstSearchResults.SelectedItem is not SearchResultItem selected) return;
+
+            // Reset selection ngay để không bị kẹt highlight
+            lstSearchResults.SelectedItem = null;
+
+            CloseSearchPopup();
+            ResetSearchBox();
+
+            // Kiểm tra xem đã có conversation 1-1 với người này chưa
+            var existing = Chats.FirstOrDefault(c =>
+                !string.IsNullOrEmpty(c.ChatName) &&
+                c.ChatName.Equals(selected.DisplayName, StringComparison.OrdinalIgnoreCase));
+
+            if (existing != null)
+            {
+                // Đã có → chỉ cần focus vào conversation đó
+                lstChats.SelectedItem = existing;
+                return;
+            }
+
+            // Chưa có → tạo conversation mới
+            try
+            {
+                var userIds = new List<string> { AuthService.CurrentUserId, selected.UserId };
+                int newConvId = await Backend.Services.ApiClient.CreateConversationAsync(
+                    isGroup: false,
+                    groupName: null,
+                    userIds: userIds);
+
+                if (newConvId == -1)
+                {
+                    MessageBox.Show("Không thể tạo cuộc trò chuyện. Vui lòng thử lại.",
+                        "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                var newChat = new ChatModel
+                {
+                    ChatId          = newConvId.ToString(),
+                    ChatName        = selected.DisplayName,
+                    Initials        = selected.Initials,
+                    AvatarColor     = selected.AvatarColor,
+                    LastMessage     = "Bắt đầu cuộc trò chuyện...",
+                    LastMessageTime = DateTime.Now.ToString("hh:mm tt")
+                };
+
+                // DEDUP: chỉ thêm nếu ChatId chưa tồn tại
+                var inserted = AddOrUpdateChat(newChat, joinRoom: false);
+                if (inserted != null) lstChats.SelectedItem = inserted;
+                await _signalRService.JoinRoomAsync(newConvId.ToString());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Lỗi: {ex.Message}", "Lỗi tạo cuộc trò chuyện",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void txtSearch_GotFocus(object sender, RoutedEventArgs e)
+        {
+            if (txtSearchPlaceholder != null)
+                txtSearchPlaceholder.Visibility = Visibility.Collapsed;
+
+            if (txtSearch != null)
+                txtSearch.Foreground = System.Windows.Media.Brushes.Black;
+
+            // Nếu đang có kết quả → hiện lại popup
+            if (_searchResults != null && _searchResults.Count > 0)
+                EnsurePopupOpen();
+        }
+
+        private void txtSearch_LostFocus(object sender, RoutedEventArgs e)
+        {
+            // Delay nhỏ để cho phép click vào item trong popup trước khi đóng
+            Task.Delay(200).ContinueWith(_ => Dispatcher.Invoke(() =>
+            {
+                if (txtSearch == null) return;
+                if (string.IsNullOrEmpty(txtSearch.Text))
+                {
+                    if (txtSearchPlaceholder != null)
+                        txtSearchPlaceholder.Visibility = Visibility.Visible;
+                    txtSearch.Foreground = System.Windows.Media.Brushes.Gray;
+                }
+            }));
+        }
+
+        private void txtSearch_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                ResetSearchBox();
+                CloseSearchPopup();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Down)
+            {
+                // Di chuyển focus xuống danh sách
+                if (lstSearchResults != null && lstSearchResults.Items.Count > 0)
+                {
+                    lstSearchResults.Focus();
+                    lstSearchResults.SelectedIndex = 0;
+                    e.Handled = true;
+                }
+            }
+        }
+
+        // ===== HELPER METHODS – NULL-SAFE =====
+
+        /// <summary>
+        /// Thêm chat vào danh sách NẾU ChatId chưa tồn tại.
+        /// Nếu đã tồn tại thì chỉ cập nhật LastMessage + LastMessageTime (không tạo dòng mới).
+        /// Trả về item thực sự trong danh sách (mới hoặc đã có) để caller có thể SelectedItem.
+        /// </summary>
+        private ChatModel? AddOrUpdateChat(ChatModel incoming, bool joinRoom)
+        {
+            // NULL GUARD
+            if (incoming == null || string.IsNullOrEmpty(incoming.ChatId)) return null;
+            if (Chats == null) return null;
+
+            // Tìm xem ChatId đã tồn tại chưa
+            var existing = Chats.FirstOrDefault(ch => ch?.ChatId == incoming.ChatId);
+
+            if (existing != null)
+            {
+                // ĐÃ CÓ → chỉ cập nhật nội dung hiển thị, KHÔNG thêm dòng mới
+                if (!string.IsNullOrEmpty(incoming.LastMessage))
+                    existing.LastMessage = incoming.LastMessage;
+                if (!string.IsNullOrEmpty(incoming.LastMessageTime))
+                    existing.LastMessageTime = incoming.LastMessageTime;
+                return existing;
+            }
+
+            // CHƯA CÓ → chèn lên đầu danh sách
+            Chats.Insert(0, incoming);
+            return incoming;
+        }
+
+        private void EnsurePopupOpen()
+        {
+            if (popupSearchResults != null && !popupSearchResults.IsOpen)
+                popupSearchResults.IsOpen = true;
+        }
+
+        private void CloseSearchPopup()
+        {
+            if (popupSearchResults != null)
+                popupSearchResults.IsOpen = false;
+        }
+
+        private void ShowSearchStatus(string message)
+        {
+            if (txtSearchStatus == null) return;
+            txtSearchStatus.Text = message;
+            txtSearchStatus.Visibility = Visibility.Visible;
+            if (panelNoResult != null) panelNoResult.Visibility = Visibility.Collapsed;
+            if (lstSearchResults != null) lstSearchResults.Visibility = Visibility.Collapsed;
+        }
+
+        private void HideSearchStatus()
+        {
+            if (txtSearchStatus != null) txtSearchStatus.Visibility = Visibility.Collapsed;
+            if (lstSearchResults != null) lstSearchResults.Visibility = Visibility.Visible;
+        }
+
+        private void ShowNoResult()
+        {
+            if (panelNoResult != null) panelNoResult.Visibility = Visibility.Visible;
+            if (lstSearchResults != null) lstSearchResults.Visibility = Visibility.Collapsed;
+        }
+
+        private void HideNoResult()
+        {
+            if (panelNoResult != null) panelNoResult.Visibility = Visibility.Collapsed;
+            if (lstSearchResults != null) lstSearchResults.Visibility = Visibility.Visible;
+        }
+
+        private void ResetSearchBox()
+        {
+            if (txtSearch == null) return;
+            txtSearch.Text = string.Empty;
+            _searchResults?.Clear();
+            if (txtSearchPlaceholder != null)
+                txtSearchPlaceholder.Visibility = Visibility.Visible;
+            txtSearch.Foreground = System.Windows.Media.Brushes.Gray;
+        }
+    }
+
+    /// <summary>
+    /// ViewModel nhẹ dùng để bind vào danh sách kết quả tìm kiếm
+    /// </summary>
+    public class SearchResultItem
+    {
+        public string UserId      { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public string Identifier  { get; set; } = string.Empty;
+        public string Initials    { get; set; } = string.Empty;
+        public string AvatarColor { get; set; } = "#3B82F6";
     }
 }

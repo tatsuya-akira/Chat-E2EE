@@ -1,39 +1,94 @@
 <Window x:Class="Hermes.CreateChatWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Tạo cuộc trò chuyện" Height="300" Width="400"
-        WindowStartupLocation="CenterOwner" Background="#F9FAFB" ResizeMode="NoResize">
-    <Grid Margin="20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+        Title="Tạo nhóm trò chuyện" 
+        Width="420"
+        SizeToContent="Height"
+        MinHeight="280"
+        WindowStartupLocation="CenterOwner"
+        Background="#F9FAFB"
+        ResizeMode="NoResize">
 
-        <TextBlock Text="Tạo cuộc trò chuyện mới" FontSize="18" FontWeight="Bold" Foreground="#1F2937" HorizontalAlignment="Center" Margin="0,0,0,15"/>
+    <Window.Resources>
+        <Style TargetType="TextBox" x:Key="InputStyle">
+            <Setter Property="Padding"         Value="10,8"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="Foreground"      Value="#1F2937"/>
+            <Setter Property="CaretBrush"      Value="#1F2937"/>
+            <Setter Property="BorderBrush"     Value="#D1D5DB"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Background"      Value="White"/>
+            <Style.Triggers>
+                <Trigger Property="IsFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="#3B82F6"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,15" HorizontalAlignment="Center">
-            <RadioButton x:Name="rbSingle" Content="Cá nhân" IsChecked="True" Margin="0,0,20,0" Checked="RadioButton_Checked"/>
-            <RadioButton x:Name="rbGroup" Content="Nhóm" Checked="RadioButton_Checked"/>
+    <!-- ScrollViewer bao ngoài để không bao giờ bị che khuất nút Tạo -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24,20,24,24">
+
+            <!-- Tiêu đề -->
+            <TextBlock Text="👥  Tạo nhóm trò chuyện mới"
+                       FontSize="17" FontWeight="Bold"
+                       Foreground="#1F2937"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,20"/>
+
+            <!-- Tên nhóm -->
+            <TextBlock Text="Tên nhóm *" FontWeight="SemiBold" Foreground="#374151"
+                       FontSize="12" Margin="0,0,0,6"/>
+            <TextBox x:Name="txtGroupName"
+                     Style="{StaticResource InputStyle}"
+                     Height="38"
+                     Margin="0,0,0,16"/>
+
+            <!-- Danh sách thành viên -->
+            <TextBlock FontWeight="SemiBold" Foreground="#374151"
+                       FontSize="12" Margin="0,0,0,6">
+                <Run Text="Thành viên *"/>
+                <Run Text="  (username hoặc email, cách nhau bằng dấu phẩy)" Foreground="#9CA3AF" FontSize="11" FontWeight="Normal"/>
+            </TextBlock>
+            <TextBox x:Name="txtTarget"
+                     Style="{StaticResource InputStyle}"
+                     Height="72"
+                     TextWrapping="Wrap"
+                     AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto"
+                     ToolTip="Ví dụ: user1@gmail.com, user2, user3"
+                     Margin="0,0,0,6"/>
+            <TextBlock Text="Tối thiểu 2 người tham gia khác bạn"
+                       FontSize="11" Foreground="#9CA3AF" Margin="0,0,0,20"/>
+
+            <!-- Nút Tạo -->
+            <Button Content="✅  Tạo nhóm"
+                    Height="42"
+                    Background="#3B82F6"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    FontSize="14"
+                    Cursor="Hand"
+                    Click="btnCreate_Click">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" CornerRadius="8"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#2563EB"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Background" Value="#93C5FD"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+
         </StackPanel>
-
-        <StackPanel x:Name="spGroupName" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,10">
-            <TextBlock Text="Tên nhóm:" FontWeight="SemiBold" Foreground="#4B5563" Margin="0,0,0,5"/>
-            <TextBox x:Name="txtGroupName" Height="30" Padding="5"/>
-        </StackPanel>
-
-        <TextBlock x:Name="lblTarget" Grid.Row="3" Text="Nhập Username hoặc Email:" FontWeight="SemiBold" Foreground="#4B5563" Margin="0,0,0,5"/>
-        <TextBox x:Name="txtTarget" Grid.Row="4" Height="60" TextWrapping="Wrap" AcceptsReturn="True" Padding="5" VerticalScrollBarVisibility="Auto" ToolTip="Nhập danh sách cách nhau bằng dấu phẩy cho nhóm"/>
-
-        <Button Grid.Row="5" Content="Tạo" Height="35" Background="#3B82F6" Foreground="White" FontWeight="Bold" Cursor="Hand" Click="btnCreate_Click" Margin="0,15,0,0">
-            <Button.Resources>
-                <Style TargetType="Border">
-                    <Setter Property="CornerRadius" Value="5"/>
-                </Style>
-            </Button.Resources>
-        </Button>
-    </Grid>
+    </ScrollViewer>
 </Window>

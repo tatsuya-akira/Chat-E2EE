@@ -1,4 +1,8 @@
+// Standardized to production level
+// Purpose: Create a new group conversation
+// Dependencies: ApiClient, AuthService
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 
@@ -6,7 +10,8 @@ namespace Hermes
 {
     public partial class CreateChatWindow : Window
     {
-        public bool IsGroup { get; private set; }
+        // IsGroup luôn true vì cửa sổ này chỉ dành cho nhóm
+        public bool IsGroup { get; } = true;
         public string ChatName { get; private set; }
         public string[] Participants { get; private set; }
         public string[] UserIds { get; private set; }
@@ -16,108 +21,95 @@ namespace Hermes
             InitializeComponent();
         }
 
-        private void RadioButton_Checked(object sender, RoutedEventArgs e)
-        {
-            if (spGroupName == null || lblTarget == null || txtTarget == null) return;
-
-            if (rbGroup.IsChecked == true)
-            {
-                spGroupName.Visibility = Visibility.Visible;
-                lblTarget.Text = "Nhập các Username/Email (ngăn cách bởi dấu phẩy):";
-                txtTarget.ToolTip = "Ví dụ: user1, user2@gmail.com";
-            }
-            else
-            {
-                spGroupName.Visibility = Visibility.Collapsed;
-                lblTarget.Text = "Nhập Username hoặc Email:";
-                txtTarget.ToolTip = "Ví dụ: user1";
-            }
-        }
-
-        // Đảm bảo hàm này nằm bên trong: public partial class CreateChatWindow : Window { ... }
-
         private async void btnCreate_Click(object sender, RoutedEventArgs e)
         {
+            // NULL GUARD
+            if (txtGroupName == null || txtTarget == null) return;
+
             try
             {
-                string targetInput = txtTarget.Text.Trim();
-                if (string.IsNullOrEmpty(targetInput))
+                string groupName = txtGroupName.Text?.Trim() ?? string.Empty;
+                string targetInput = txtTarget.Text?.Trim() ?? string.Empty;
+
+                // Kiểm tra tên nhóm
+                if (string.IsNullOrEmpty(groupName))
                 {
-                    MessageBox.Show("Vui lòng nhập đối tượng nhắn tin!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBox.Show("Vui lòng nhập tên nhóm!", "Thiếu thông tin",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    txtGroupName.Focus();
                     return;
                 }
 
-                if (rbGroup.IsChecked == true)
+                // Kiểm tra danh sách thành viên
+                if (string.IsNullOrEmpty(targetInput))
                 {
-                    string groupName = txtGroupName.Text.Trim();
-                    if (string.IsNullOrEmpty(groupName))
-                    {
-                        MessageBox.Show("Vui lòng nhập tên nhóm!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-
-                    var targets = targetInput.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                                             .Select(t => t.Trim()).Distinct().ToList();
-
-                    if (targets.Count < 2)
-                    {
-                        MessageBox.Show("Nhóm phải có tối thiểu 2 người tham gia khác.", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-
-                    var participantsList = new System.Collections.Generic.List<string>();
-                    var userIdsList = new System.Collections.Generic.List<string>();
-
-                    foreach (var target in targets)
-                    {
-                        var user = await Hermes.Backend.Services.ApiClient.GetUserByIdentifierAsync(target);
-                        if (user == null)
-                        {
-                            MessageBox.Show($"Không tìm thấy tài khoản: {target}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
-                            return;
-                        }
-                        participantsList.Add(user.FullName);
-                        userIdsList.Add(user.UserId);
-                    }
-
-                    IsGroup = true;
-                    ChatName = groupName;
-
-                    string currentFullName = AuthService.CurrentFullName;
-
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName); if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
-                    userIdsList.Add(AuthService.CurrentUserId);
-
-                    Participants = participantsList.ToArray();
-                    UserIds = userIdsList.ToArray();
+                    MessageBox.Show("Vui lòng nhập danh sách thành viên!", "Thiếu thông tin",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    txtTarget.Focus();
+                    return;
                 }
-                else
+
+                var targets = targetInput
+                    .Split(new[] { ',', ';', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(t => t.Trim())
+                    .Where(t => !string.IsNullOrEmpty(t))
+                    .Distinct()
+                    .ToList();
+
+                if (targets.Count < 2)
                 {
-                    var user = await Hermes.Backend.Services.ApiClient.GetUserByIdentifierAsync(targetInput);
+                    MessageBox.Show("Nhóm phải có tối thiểu 2 người tham gia khác bạn.",
+                        "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                // Disable nút để tránh double-click
+                var btn = sender as System.Windows.Controls.Button;
+                if (btn != null) btn.IsEnabled = false;
+
+                var participantsList = new List<string>();
+                var userIdsList      = new List<string>();
+
+                foreach (var target in targets)
+                {
+                    var user = await Hermes.Backend.Services.ApiClient.GetUserByIdentifierAsync(target);
                     if (user == null)
                     {
-                        MessageBox.Show("Không tìm thấy tài khoản này!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                        MessageBox.Show($"Không tìm thấy tài khoản: «{target}»\nVui lòng kiểm tra lại username hoặc email.",
+                            "Không tìm thấy", MessageBoxButton.OK, MessageBoxImage.Error);
+                        if (btn != null) btn.IsEnabled = true;
                         return;
                     }
 
-                    IsGroup = false;
-                    ChatName = user.FullName;
-
-                    var participantsList = new System.Collections.Generic.List<string> { user.FullName };
-                    string currentFullName = AuthService.CurrentFullName;
-
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName); if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
-
-                    Participants = participantsList.ToArray();
-                    UserIds = new[] { user.UserId, AuthService.CurrentUserId };
+                    // Tránh trùng userId
+                    if (!string.IsNullOrEmpty(user.UserId) && !userIdsList.Contains(user.UserId))
+                    {
+                        participantsList.Add(user.FullName ?? target);
+                        userIdsList.Add(user.UserId);
+                    }
                 }
+
+                // Thêm bản thân vào nhóm
+                string myId       = AuthService.CurrentUserId;
+                string myFullName = AuthService.CurrentFullName;
+                if (!string.IsNullOrEmpty(myId) && !userIdsList.Contains(myId))
+                {
+                    userIdsList.Add(myId);
+                    if (!string.IsNullOrEmpty(myFullName))
+                        participantsList.Add(myFullName);
+                }
+
+                ChatName     = groupName;
+                Participants = participantsList.ToArray();
+                UserIds      = userIdsList.ToArray();
 
                 this.DialogResult = true;
                 this.Close();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Lỗi kết nối: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Lỗi kết nối: {ex.Message}", "Lỗi",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }

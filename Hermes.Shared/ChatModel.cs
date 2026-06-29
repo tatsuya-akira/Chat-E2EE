@@ -24,10 +24,32 @@ namespace Hermes.Shared.Models
     {
         public string ChatId { get; set; }
         public string ChatName { get; set; }
-        public string LastMessage { get; set; }
-        public string LastMessageTime { get; set; }
+
+        private string _lastMessage;
+        public string LastMessage
+        {
+            get => _lastMessage;
+            set { if (_lastMessage != value) { _lastMessage = value; OnPropertyChanged(); } }
+        }
+
+        private string _lastMessageTime;
+        public string LastMessageTime
+        {
+            get => _lastMessageTime;
+            set { if (_lastMessageTime != value) { _lastMessageTime = value; OnPropertyChanged(); } }
+        }
+
         public string Initials { get; set; }
         public string AvatarColor { get; set; } // hex color
+
+        private bool _isOnline = false;
+        public bool IsOnline
+        {
+            get => _isOnline;
+            set { if (_isOnline != value) { _isOnline = value; OnPropertyChanged(); OnPropertyChanged(nameof(OnlineStatusText)); OnPropertyChanged(nameof(OnlineStatusColor)); } }
+        }
+        public string OnlineStatusText  => _isOnline ? "Đang hoạt động" : "Không hoạt động";
+        public string OnlineStatusColor => _isOnline ? "#10B981" : "#9CA3AF";
 
         public ObservableCollection<MessageModel> Messages { get; set; }
 

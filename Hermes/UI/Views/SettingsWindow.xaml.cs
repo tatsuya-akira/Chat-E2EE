@@ -15,9 +15,12 @@ namespace Hermes
 
         private void LoadUserData()
         {
-            txtUserId.Text = "UID: " + (AuthService.CurrentUserId ?? "N/A");
-            txtUserEmail.Text = "Email: " + (Environment.GetEnvironmentVariable("USER_EMAIL") ?? "Tài khoản hiện tại");
-            txtUserName.Text = "Tên người dùng: " + (AuthService.CurrentFullName ?? "N/A");
+            // NULL GUARD – tránh crash nếu control chưa render xong
+            if (txtUserId == null || txtUserEmail == null || txtUserName == null) return;
+
+            txtUserName.Text  = "👤  " + (AuthService.CurrentFullName ?? "Chưa cập nhật");
+            txtUserEmail.Text = "📧  " + (AuthService.CurrentEmail   ?? "Chưa cập nhật");
+            txtUserId.Text    = "🔑  UID: " + (AuthService.CurrentUserId ?? "N/A");
         }
 
         // ĐỔI THÀNH async void ĐỂ DÙNG ĐƯỢC await
