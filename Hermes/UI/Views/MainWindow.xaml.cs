@@ -1,4 +1,7 @@
-﻿using Microsoft.VisualBasic;
+// Standardized to production level
+// Purpose: Login window – email/password + Google OAuth, E2EE key bootstrap
+// Dependencies: AuthService, CryptoService, Google.Apis.Auth.OAuth2
+using Microsoft.VisualBasic;
 using System;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -21,20 +24,11 @@ namespace Hermes
             {
                 // Có khóa! Nạp lên RAM luôn
                 AuthService.CurrentPrivateKey = savedKey;
-
-                // Lưu ý: Tùy kiến trúc của bạn, bạn cần lưu thêm ID hoặc Email user vào setting cục bộ
-                // để API biết là ai đang login. Giả sử bạn lưu ID thành công:
-                // AuthService.CurrentUserId = "..."; 
-
-                //ChatWindow chat = new ChatWindow();
-                //chat.Show();
-                //this.Close();
             }
         }
 
         private bool IsValidEmail(string email)
         {
-            // Kiểm tra định dạng có chữ @ và dấu chấm
             return Regex.IsMatch(email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$");
         }
 
@@ -45,7 +39,6 @@ namespace Hermes
 
             try
             {
-
                 // 1. Kiểm tra rỗng
                 if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
                 {
@@ -67,11 +60,12 @@ namespace Hermes
                     return;
                 }
 
-                // Nếu qua hết các bài kiểm tra thì mới cho vào
-                btnLogin.IsEnabled = false; // Disable nút đăng nhập khi đang gọi API
+                btnLogin.IsEnabled = false;
                 bool res = await AuthService.LoginAsync(email, password);
                 if (res)
                 {
+                    // Lưu email vào session để Settings hiển thị đúng
+                    AuthService.CurrentEmail = email;
                     ChatWindow chat = new ChatWindow();
                     chat.Show();
                     this.Close();
@@ -137,11 +131,8 @@ namespace Hermes
         {
             DotNetEnv.Env.TraversePath().Load();
 
-            // 1. DÁN CLIENT ID VÀ CLIENT SECRET CỦA BẠN VÀO ĐÂY
             string clientId = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID") ?? "GOOGLE_CLIENT_ID";
             string clientSecret = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_SECRET") ?? "GOOGLE_CLIENT_SECRET";
-
-            // 2. Xin quyền lấy Email và ID Token (Bắt buộc phải có chữ "openid")
             string[] scopes = { "openid", "email", "profile" };
 
             try
@@ -152,7 +143,6 @@ namespace Hermes
                     ClientSecret = clientSecret
                 };
 
-                // 3. Lệnh này sẽ bật một cửa sổ trình duyệt Web lên để người dùng đăng nhập Google
                 UserCredential credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
                     secrets,
                     scopes,
@@ -161,7 +151,6 @@ namespace Hermes
                     new Google.Apis.Util.Store.FileDataStore("Hermes.GoogleAuth")
                 );
 
-                // 4. BÙM! Đây chính là cái googleIdToken mà Firebase đang chờ đợi!
                 if (credential.Token.IsExpired(credential.Flow.Clock))
                 {
                     await credential.RefreshTokenAsync(CancellationToken.None);
@@ -174,9 +163,9 @@ namespace Hermes
                 throw new Exception("Hủy đăng nhập hoặc có lỗi xảy ra: " + ex.Message);
             }
         }
+
         private async void btnGoogleLogin_Click(object sender, RoutedEventArgs e)
         {
-            // Đưa biến này ra ngoài try-catch để lát nữa dùng lại để Reset khóa
             string e2eePinCode = "";
 
             try
@@ -198,6 +187,9 @@ namespace Hermes
                 bool res = await AuthService.LoginWithGoogleAsync(idToken, e2eePinCode);
                 if (res)
                 {
+                    // Ghi nhận loại tài khoản Google cho Settings
+                    if (string.IsNullOrEmpty(AuthService.CurrentEmail))
+                        AuthService.CurrentEmail = "(Google Account)";
                     ChatWindow chat = new ChatWindow();
                     chat.Show();
                     this.Close();
@@ -219,7 +211,6 @@ namespace Hermes
                     {
                         try
                         {
-                            // Dùng chính mã PIN họ vừa nhập ở trên làm chìa khóa mới
                             await AuthService.ResetAccountKeysAsync(e2eePinCode);
                             MessageBox.Show("Khôi phục tài khoản thành công! Khóa bảo mật mới đã được tạo.", "Thành công", MessageBoxButton.OK, MessageBoxImage.Information);
 

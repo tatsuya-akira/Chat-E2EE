@@ -17,6 +17,7 @@ namespace Hermes
         public static string CurrentPrivateKey { get; set; }
         public static string CurrentPublicKey { get; private set; }
         public static string CurrentFullName { get; set; }
+        public static string CurrentEmail { get; set; }   // Email đăng nhập hiện tại
 
         static AuthService()
         {

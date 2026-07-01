@@ -1,124 +1,175 @@
+// Standardized to production level
+// Purpose: Create a new group conversation with search suggestion and chips
+// Dependencies: ApiClient, AuthService
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace Hermes
 {
     public partial class CreateChatWindow : Window
     {
-        public bool IsGroup { get; private set; }
-        public string ChatName { get; private set; }
-        public string[] Participants { get; private set; }
-        public string[] UserIds { get; private set; }
+        public bool IsGroup { get; } = true;
+        public string ChatName { get; private set; } = "";
+        public string[] Participants { get; private set; } = Array.Empty<string>();
+        public string[] UserIds { get; private set; } = Array.Empty<string>();
+
+        private ObservableCollection<SearchResultItem> _selectedMembers = new ObservableCollection<SearchResultItem>();
+        private ObservableCollection<SearchResultItem> _suggestions = new ObservableCollection<SearchResultItem>();
+        private CancellationTokenSource? _searchCts;
 
         public CreateChatWindow()
         {
             InitializeComponent();
+            icSelectedMembers.ItemsSource = _selectedMembers;
+            icSuggestions.ItemsSource = _suggestions;
         }
 
-        private void RadioButton_Checked(object sender, RoutedEventArgs e)
+        private async void txtSearchMember_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (spGroupName == null || lblTarget == null || txtTarget == null) return;
+            string keyword = txtSearchMember.Text?.Trim() ?? string.Empty;
 
-            if (rbGroup.IsChecked == true)
+            if (string.IsNullOrEmpty(keyword))
             {
-                spGroupName.Visibility = Visibility.Visible;
-                lblTarget.Text = "Nhập các Username/Email (ngăn cách bởi dấu phẩy):";
-                txtTarget.ToolTip = "Ví dụ: user1, user2@gmail.com";
+                _searchCts?.Cancel();
+                _suggestions.Clear();
+                bdSuggestions.Visibility = Visibility.Collapsed;
+                return;
             }
-            else
-            {
-                spGroupName.Visibility = Visibility.Collapsed;
-                lblTarget.Text = "Nhập Username hoặc Email:";
-                txtTarget.ToolTip = "Ví dụ: user1";
-            }
-        }
 
-        // Đảm bảo hàm này nằm bên trong: public partial class CreateChatWindow : Window { ... }
+            _searchCts?.Cancel();
+            _searchCts?.Dispose();
+            _searchCts = new CancellationTokenSource();
+            var token = _searchCts.Token;
 
-        private async void btnCreate_Click(object sender, RoutedEventArgs e)
-        {
             try
             {
-                string targetInput = txtTarget.Text.Trim();
-                if (string.IsNullOrEmpty(targetInput))
-                {
-                    MessageBox.Show("Vui lòng nhập đối tượng nhắn tin!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
+                await Task.Delay(300, token);
+                if (token.IsCancellationRequested) return;
 
-                if (rbGroup.IsChecked == true)
+                var users = await Backend.Services.ApiClient.SearchUsersAsync(keyword);
+                if (token.IsCancellationRequested) return;
+
+                Dispatcher.Invoke(() =>
                 {
-                    string groupName = txtGroupName.Text.Trim();
-                    if (string.IsNullOrEmpty(groupName))
+                    if (token.IsCancellationRequested || string.IsNullOrWhiteSpace(txtSearchMember.Text))
                     {
-                        MessageBox.Show("Vui lòng nhập tên nhóm!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        _suggestions.Clear();
+                        bdSuggestions.Visibility = Visibility.Collapsed;
                         return;
                     }
 
-                    var targets = targetInput.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                                             .Select(t => t.Trim()).Distinct().ToList();
-
-                    if (targets.Count < 2)
+                    _suggestions.Clear();
+                    if (users != null && users.Any())
                     {
-                        MessageBox.Show("Nhóm phải có tối thiểu 2 người tham gia khác.", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-
-                    var participantsList = new System.Collections.Generic.List<string>();
-                    var userIdsList = new System.Collections.Generic.List<string>();
-
-                    foreach (var target in targets)
-                    {
-                        var user = await Hermes.Backend.Services.ApiClient.GetUserByIdentifierAsync(target);
-                        if (user == null)
+                        string[] palette = { "#3B82F6", "#8B5CF6", "#EC4899", "#10B981", "#F59E0B", "#EF4444" };
+                        foreach (var u in users)
                         {
-                            MessageBox.Show($"Không tìm thấy tài khoản: {target}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
-                            return;
+                            if (u.UserId == AuthService.CurrentUserId) continue; // Ẩn bản thân
+                            if (_selectedMembers.Any(sm => sm.UserId == u.UserId)) continue; // Ẩn người đã chọn
+
+                            string displayName = !string.IsNullOrWhiteSpace(u.FullName) ? u.FullName : u.UserId ?? "Người dùng";
+                            string initials = displayName.Length > 0 ? displayName.Substring(0, 1).ToUpper() : "?";
+                            string avatarColor = palette[Math.Abs(displayName.GetHashCode()) % palette.Length];
+
+                            _suggestions.Add(new SearchResultItem
+                            {
+                                UserId = u.UserId ?? "",
+                                DisplayName = displayName,
+                                Identifier = u.UserId ?? keyword,
+                                Initials = initials,
+                                AvatarColor = avatarColor
+                            });
                         }
-                        participantsList.Add(user.FullName);
-                        userIdsList.Add(user.UserId);
+
+                        bdSuggestions.Visibility = _suggestions.Any() ? Visibility.Visible : Visibility.Collapsed;
                     }
-
-                    IsGroup = true;
-                    ChatName = groupName;
-
-                    string currentFullName = AuthService.CurrentFullName;
-
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName); if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
-                    userIdsList.Add(AuthService.CurrentUserId);
-
-                    Participants = participantsList.ToArray();
-                    UserIds = userIdsList.ToArray();
-                }
-                else
-                {
-                    var user = await Hermes.Backend.Services.ApiClient.GetUserByIdentifierAsync(targetInput);
-                    if (user == null)
+                    else
                     {
-                        MessageBox.Show("Không tìm thấy tài khoản này!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
-                        return;
+                        bdSuggestions.Visibility = Visibility.Collapsed;
                     }
-
-                    IsGroup = false;
-                    ChatName = user.FullName;
-
-                    var participantsList = new System.Collections.Generic.List<string> { user.FullName };
-                    string currentFullName = AuthService.CurrentFullName;
-
-                    if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName); if (!string.IsNullOrEmpty(currentFullName)) participantsList.Add(currentFullName);
-
-                    Participants = participantsList.ToArray();
-                    UserIds = new[] { user.UserId, AuthService.CurrentUserId };
-                }
-
-                this.DialogResult = true;
-                this.Close();
+                });
             }
-            catch (Exception ex)
+            catch (OperationCanceledException) { }
+            catch { bdSuggestions.Visibility = Visibility.Collapsed; }
+        }
+
+        private void SuggestionItem_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement element && element.DataContext is SearchResultItem item)
             {
-                MessageBox.Show($"Lỗi kết nối: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
+                if (!_selectedMembers.Any(sm => sm.UserId == item.UserId))
+                {
+                    _selectedMembers.Add(item);
+                }
+                txtSearchMember.Text = "";
+                _suggestions.Clear();
+                bdSuggestions.Visibility = Visibility.Collapsed;
+                txtSearchMember.Focus();
             }
+        }
+
+        private void RemoveMember_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string userId)
+            {
+                var target = _selectedMembers.FirstOrDefault(sm => sm.UserId == userId);
+                if (target != null)
+                {
+                    _selectedMembers.Remove(target);
+                }
+            }
+        }
+
+        private void btnCreate_Click(object sender, RoutedEventArgs e)
+        {
+            string groupName = txtGroupName.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(groupName))
+            {
+                MessageBox.Show("Vui lòng nhập tên nhóm!", "Thiếu thông tin", MessageBoxButton.OK, MessageBoxImage.Warning);
+                txtGroupName.Focus();
+                return;
+            }
+
+            if (_selectedMembers.Count < 2)
+            {
+                MessageBox.Show("Nhóm phải có tối thiểu 2 người tham gia khác bạn.", "Thiếu thành viên", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var participantsList = new List<string>();
+            var userIdsList = new List<string>();
+
+            foreach (var sm in _selectedMembers)
+            {
+                if (!userIdsList.Contains(sm.UserId))
+                {
+                    userIdsList.Add(sm.UserId);
+                    participantsList.Add(sm.DisplayName);
+                }
+            }
+
+            string myId = AuthService.CurrentUserId;
+            string myFullName = AuthService.CurrentFullName;
+            if (!string.IsNullOrEmpty(myId) && !userIdsList.Contains(myId))
+            {
+                userIdsList.Add(myId);
+                if (!string.IsNullOrEmpty(myFullName))
+                    participantsList.Add(myFullName);
+            }
+
+            ChatName = groupName;
+            Participants = participantsList.ToArray();
+            UserIds = userIdsList.ToArray();
+
+            this.DialogResult = true;
+            this.Close();
         }
     }
 }

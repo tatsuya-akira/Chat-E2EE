@@ -43,6 +43,14 @@ namespace Hermes.Backend.Services
             return null;
         }
 
+        public static async Task<List<UserInfoResponse>> SearchUsersAsync(string keyword)
+        {
+            var response = await _httpClient.GetAsync($"Conversation/search-users?keyword={Uri.EscapeDataString(keyword ?? "")}");
+            if (response.IsSuccessStatusCode)
+                return await response.Content.ReadFromJsonAsync<List<UserInfoResponse>>() ?? new List<UserInfoResponse>();
+            return new List<UserInfoResponse>();
+        }
+
         public static async Task<int> CreateConversationAsync(bool isGroup, string groupName, List<string> userIds)
         {
             var request = new CreateConversationRequest { IsGroup = isGroup, GroupName = groupName, ParticipantIds = userIds };
@@ -59,16 +67,27 @@ namespace Hermes.Backend.Services
                 return -1;
             }
         }
-        public static async Task<bool> SaveMessageAsync(SendMessageDto dto)
+        public static async Task<int> SaveMessageAsync(SendMessageDto dto)
         {
             var response = await _httpClient.PostAsJsonAsync("Message/save", dto);
             if (!response.IsSuccessStatusCode)
             {
                 string error = await response.Content.ReadAsStringAsync();
                 System.Windows.MessageBox.Show($"Lỗi lưu tin nhắn: {error}");
-                return false;
+                return -1;
             }
-            return true; // Lưu Database thành công!
+            var resStr = await response.Content.ReadAsStringAsync();
+            if (int.TryParse(resStr, out int msgId))
+            {
+                return msgId;
+            }
+            return 1;
+        }
+
+        public static async Task<bool> DeleteMessageAsync(int messageId)
+        {
+            var response = await _httpClient.DeleteAsync($"Message/{messageId}");
+            return response.IsSuccessStatusCode;
         }
         public static async Task<List<MessageModel>> GetChatHistoryAsync(int conversationId, string userId)
         {
@@ -132,6 +151,22 @@ namespace Hermes.Backend.Services
         {
             var response = await _httpClient.PutAsJsonAsync("Auth/update-keys", request);
             return response.IsSuccessStatusCode;
+        }
+
+        public static async Task<bool> RemoveParticipantAsync(int conversationId, string userId, string actionType)
+        {
+            try
+            {
+                var req = new Hermes.Shared.DTOs.RemoveParticipantRequest
+                {
+                    ConversationId = conversationId,
+                    UserId = userId,
+                    ActionType = actionType
+                };
+                var response = await _httpClient.PostAsJsonAsync("Conversation/remove-participant", req);
+                return response.IsSuccessStatusCode;
+            }
+            catch { return false; }
         }
     }
 }
