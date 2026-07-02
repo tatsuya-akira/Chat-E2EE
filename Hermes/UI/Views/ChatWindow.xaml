@@ -127,6 +127,7 @@
                     </StackPanel>
                 </Grid>
 
+
                 <!-- ===== Ô TÌM KIẾM VỚI POPUP GỢI Ý ===== -->
                 <Grid Grid.Row="1" Margin="5,0,5,15">
                     <TextBox x:Name="txtSearch"
@@ -386,10 +387,10 @@
                                 <TextBlock Text="{Binding ElementName=lstChats, Path=SelectedItem.Initials}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
                             </Grid>
                             <StackPanel VerticalAlignment="Center">
-                                <TextBlock x:Name="txtCurrentChatName" Text="{Binding ElementName=lstChats, Path=SelectedItem.ChatName}" FontSize="18" FontWeight="Bold" Foreground="#1F2937"/>
-                                <StackPanel Orientation="Horizontal">
-                                    <Ellipse Width="8" Height="8" Fill="#10B981" Margin="0,0,5,0"/>
-                                    <TextBlock Text="Đang hoạt động" Foreground="#10B981" FontSize="12" FontWeight="SemiBold"/>
+                                <TextBlock FontSize="18" FontWeight="Bold" Foreground="#1F2937" Text="{Binding ElementName=lstChats, Path=SelectedItem.ChatName}" x:Name="txtCurrentChatName"/>
+                                <StackPanel Margin="0,3,0,0" Orientation="Horizontal">
+                                    <Ellipse Fill="{Binding ElementName=lstChats, Path=SelectedItem.StatusColor}" Height="8" Margin="0,0,5,0" VerticalAlignment="Center" Width="8"/>
+                                    <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="{Binding ElementName=lstChats, Path=SelectedItem.StatusColor}" Text="{Binding ElementName=lstChats, Path=SelectedItem.StatusText}" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>
@@ -437,7 +438,7 @@
                                                 </Border>
                                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,5,0">
                                                     <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="0,0,5,0"/>
-                                                    <TextBlock Text="✓✓" FontSize="10" Foreground="#3B82F6" FontWeight="Bold"/>
+                                                    <TextBlock Text="✓✓" FontSize="10" Foreground="{Binding ReadStatusColor}" FontWeight="Bold"/>
                                                 </StackPanel>
                                             </StackPanel>
                                         </Grid>

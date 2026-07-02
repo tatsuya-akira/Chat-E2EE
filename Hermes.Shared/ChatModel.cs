@@ -25,6 +25,22 @@ namespace Hermes.Shared.Models
                 }
             }
         }
+        private bool _isRead;
+        public bool IsRead
+        {
+            get => _isRead;
+            set
+            {
+                if (_isRead != value)
+                {
+                    _isRead = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(ReadStatusColor));
+                }
+            }
+        }
+
+        public string ReadStatusColor => IsRead ? "#3B82F6" : "#9CA3AF";
 
         public string? Time { get; set; }
         public bool IsMine { get; set; }
@@ -119,18 +135,26 @@ namespace Hermes.Shared.Models
             get => _lastMessageTime;
             set { if (_lastMessageTime != value) { _lastMessageTime = value; OnPropertyChanged(); } }
         }
-
+        public bool IsGroup { get; set; }
         public string Initials { get; set; }
         public string AvatarColor { get; set; } // hex color
 
-        private bool _isOnline = false;
+        public string? TargetUserId { get; set; } // Giữ ID đối phương
+        private bool _isOnline;
         public bool IsOnline
         {
             get => _isOnline;
-            set { if (_isOnline != value) { _isOnline = value; OnPropertyChanged(); OnPropertyChanged(nameof(OnlineStatusText)); OnPropertyChanged(nameof(OnlineStatusColor)); } }
+            set { _isOnline = value; OnPropertyChanged(); OnPropertyChanged(nameof(StatusText)); OnPropertyChanged(nameof(StatusColor)); }
         }
-        public string OnlineStatusText  => _isOnline ? "Đang hoạt động" : "Không hoạt động";
-        public string OnlineStatusColor => _isOnline ? "#10B981" : "#9CA3AF";
+        private bool _isRead;
+        public bool IsRead
+        {
+            get => _isRead;
+            set { _isRead = value; OnPropertyChanged(); OnPropertyChanged(nameof(ReadStatusColor)); }
+        }
+        public string ReadStatusColor => IsRead ? "#3B82F6" : "#9CA3AF"; // Xanh (Đã xem), Xám (Đã nhận)
+        public string StatusText => IsOnline ? "Đang hoạt động" : "Ngoại tuyến";
+        public string StatusColor => IsOnline ? "#10B981" : "#9CA3AF"; // Xanh ngọc hoặc Xám
 
         public ObservableCollection<MessageModel> Messages { get; set; }
 

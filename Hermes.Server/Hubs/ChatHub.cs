@@ -150,5 +150,9 @@ namespace Hermes.Server.Hubs
         {
             await Clients.Group(conversationId).SendAsync("ReceiveMessageDeletion", conversationId, messageId);
         }
+        public async Task NotifyMessagesRead(string conversationId, string readerId)
+        {
+            await Clients.OthersInGroup(conversationId).SendAsync("MessagesMarkedAsRead", conversationId, readerId);
+        }
     }
 }

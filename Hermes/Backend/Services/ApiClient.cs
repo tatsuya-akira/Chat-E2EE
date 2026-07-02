@@ -168,5 +168,18 @@ namespace Hermes.Backend.Services
             }
             catch { return false; }
         }
+        public static async Task<bool> MarkMessagesAsReadAsync(int conversationId, string readerId)
+        {
+            try
+            {
+                // Gửi lệnh PUT lên API để cập nhật IsRead trong DB
+                var response = await _httpClient.PutAsync($"Message/mark-read/{conversationId}/{readerId}", null);
+                return response.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }

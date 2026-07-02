@@ -104,18 +104,16 @@ namespace Hermes.Server.Controllers
 
             // Câu truy vấn tìm các nhóm/người đã chat, và lấy tên người bên kia (nếu là chat cá nhân)
             string query = @"
-        SELECT 
-            c.Id as ChatId, 
-            c.IsGroup, 
-            c.GroupName,
-            (SELECT i.FullName 
-             FROM PARTICIPANTS p2 
-             JOIN USERINFO i ON p2.UserId = i.UserId 
-             WHERE p2.ConversationId = c.Id AND p2.UserId != @UserId LIMIT 1) as OtherUserName
-        FROM CONVERSATIONS c
-        JOIN PARTICIPANTS p ON c.Id = p.ConversationId
-        WHERE p.UserId = @UserId
-        ORDER BY c.CreatedAt DESC";
+                            SELECT 
+                                c.Id as ChatId, 
+                                c.IsGroup, 
+                                c.GroupName,
+                                (SELECT i.FullName FROM PARTICIPANTS p2 JOIN USERINFO i ON p2.UserId = i.UserId WHERE p2.ConversationId = c.Id AND p2.UserId != @UserId LIMIT 1) as OtherUserName,
+                                (SELECT p2.UserId FROM PARTICIPANTS p2 WHERE p2.ConversationId = c.Id AND p2.UserId != @UserId LIMIT 1) as OtherUserId 
+                            FROM CONVERSATIONS c
+                            JOIN PARTICIPANTS p ON c.Id = p.ConversationId
+                            WHERE p.UserId = @UserId
+                            ORDER BY c.CreatedAt DESC";
 
             var chats = await connection.QueryAsync<ChatListResponse>(query, new { UserId = userId });
             return Ok(chats);

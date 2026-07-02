@@ -83,6 +83,21 @@ namespace Hermes
                     }
                 });
             };
+            _signalRService.OnUserStatusChanged += (userId, isOnline) =>
+            {
+                // Bắt buộc dùng Dispatcher vì đang thao tác lên UI Thread
+                Dispatcher.Invoke(() =>
+                {
+                    // Tìm cuộc trò chuyện tương ứng với người vừa Online/Offline
+                    var chatToUpdate = Chats.FirstOrDefault(c => c.TargetUserId == userId);
+
+                    if (chatToUpdate != null)
+                    {
+                        // Update biến này, giao diện XAML sẽ tự động đổi màu chấm tròn
+                        chatToUpdate.IsOnline = isOnline;
+                    }
+                });
+            };
             _webRTCService = new Hermes.Client.Services.WebRTCService();
 
             // Khi WebRTC tạo xong tín hiệu, đẩy nó qua SignalR
@@ -266,11 +281,13 @@ namespace Hermes
                 string displayName = c.IsGroup ? (c.GroupName ?? "") : (c.OtherUserName ?? "");
                 var incoming = new ChatModel
                 {
-                    ChatId          = c.ChatId,
-                    ChatName        = displayName,
-                    Initials        = c.IsGroup ? "G" : (string.IsNullOrEmpty(displayName) ? "" : displayName.Substring(0, 1).ToUpper()),
-                    AvatarColor     = c.IsGroup ? "#10B981" : "#F59E0B",
-                    LastMessage     = "Bấm để xem tin nhắn...",
+                    ChatId = c.ChatId,
+                    TargetUserId = c.OtherUserId,
+                    IsGroup = c.IsGroup,
+                    ChatName = displayName,
+                    Initials = c.IsGroup ? "G" : (string.IsNullOrEmpty(displayName) ? "" : displayName.Substring(0, 1).ToUpper()),
+                    AvatarColor = c.IsGroup ? "#10B981" : "#F59E0B",
+                    LastMessage = "Bấm để xem tin nhắn...",
                     LastMessageTime = ""
                 };
 
@@ -278,8 +295,29 @@ namespace Hermes
                 await _signalRService.JoinRoomAsync(c.ChatId);
             }
 
+            // ... code Bước 2 của bạn ở trên ...
+
             if (Chats.Any() && lstChats.SelectedIndex < 0)
                 lstChats.SelectedIndex = 0;
+
+            // --- BƯỚC 3: QUÉT TRẠNG THÁI ONLINE BAN ĐẦU ---
+            try
+            {
+                var onlineUsers = await _signalRService.GetOnlineUsersAsync();
+                foreach (var chat in Chats)
+                {
+                    // Chỉ kiểm tra Online cho chat cá nhân (không phải Group)
+                    if (!chat.IsGroup && !string.IsNullOrEmpty(chat.TargetUserId))
+                    {
+                        chat.IsOnline = onlineUsers.Contains(chat.TargetUserId);
+                    }
+                }
+            }
+            catch
+            {
+                // Bỏ qua lỗi nếu mạng chập chờn không lấy được trạng thái lúc khởi động
+                System.Diagnostics.Debug.WriteLine("Không thể lấy trạng thái online ban đầu.");
+            }
         }
 
         private async void lstChats_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -296,7 +334,6 @@ namespace Hermes
 
                 selectedChat.Messages.Clear();
 
-                // Thay dòng gọi API cũ bằng dòng này
                 var history = await Backend.Services.ApiClient.GetChatHistoryAsync(int.Parse(selectedChat.ChatId), AuthService.CurrentUserId);
 
                 foreach (var msg in history)
@@ -330,7 +367,25 @@ namespace Hermes
                         });
                     }
                 }
+                // --- KÍCH HOẠT LOGIC "ĐÃ XEM" (READ RECEIPTS) ---
+                try
+                {
+                    // 1. Gọi qua ApiClient cho gọn
+                    await Backend.Services.ApiClient.MarkMessagesAsReadAsync(int.Parse(selectedChat.ChatId), AuthService.CurrentUserId);
 
+                    // 2. Báo cho đối phương biết qua SignalR
+                    await _signalRService.NotifyMessagesReadAsync(selectedChat.ChatId, AuthService.CurrentUserId);
+
+                    // 3. Cập nhật trạng thái tick xanh ngay lập tức trên UI của mình
+                    foreach (var m in selectedChat.Messages.Where(m => m.IsMine))
+                    {
+                        m.IsRead = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Lỗi đánh dấu đã xem: {ex.Message}");
+                }
                 if (_infoPanelOpen)
                 {
                     OpenChatInfoPanel();

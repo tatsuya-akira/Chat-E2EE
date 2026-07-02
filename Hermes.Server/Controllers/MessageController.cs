@@ -66,7 +66,7 @@ namespace Hermes.Server.Controllers
             string query = @"
                 SELECT m.Id as MessageId, m.SenderId, IFNULL(i.FullName, 'Hệ thống') as SenderName, m.CipherText as Content, 
                        DATE_FORMAT(m.SentAt, '%h:%i %p') as Time, 
-                       mr.EncryptedSessionKey, m.TimeToLive
+                       mr.EncryptedSessionKey, mr.IsRead, m.TimeToLive
                 FROM MESSAGES m
                 LEFT JOIN USERINFO i ON m.SenderId = i.UserId
                 JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId
@@ -83,6 +83,19 @@ namespace Hermes.Server.Controllers
             using var connection = new MySqlConnection(ConnectionString);
             await connection.ExecuteAsync("DELETE FROM MESSAGE_RECIPIENTS WHERE MessageId = @Id", new { Id = messageId });
             await connection.ExecuteAsync("DELETE FROM MESSAGES WHERE Id = @Id", new { Id = messageId });
+            return Ok();
+        }
+        [HttpPut("mark-read/{conversationId}/{readerId}")]
+        public async Task<IActionResult> MarkAsRead(int conversationId, string readerId)
+        {
+            using var connection = new MySqlConnection(ConnectionString);
+            string query = @"
+        UPDATE MESSAGE_RECIPIENTS mr
+        JOIN MESSAGES m ON mr.MessageId = m.Id
+        SET mr.IsRead = 1, mr.ReadAt = CURRENT_TIMESTAMP
+        WHERE m.ConversationId = @ConvId AND mr.RecipientId = @ReaderId AND mr.IsRead = 0";
+
+            await connection.ExecuteAsync(query, new { ConvId = conversationId, ReaderId = readerId });
             return Ok();
         }
     }

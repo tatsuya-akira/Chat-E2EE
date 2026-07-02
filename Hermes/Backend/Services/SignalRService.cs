@@ -125,5 +125,10 @@ namespace Hermes.Backend.Services
                 await _connection.InvokeAsync("NotifyDeleteMessage", conversationId, messageId);
             }
         }
+        public async Task NotifyMessagesReadAsync(string conversationId, string userId)
+        {
+            // Đây là lệnh gọi trực tiếp hàm "NotifyMessagesRead" trên Server
+            await _connection.InvokeAsync("NotifyMessagesRead", conversationId, userId);
+        }
     }
 }
