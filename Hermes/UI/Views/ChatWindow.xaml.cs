@@ -54,11 +54,13 @@ namespace Hermes
             }
 
             // 1. Khởi tạo SignalR
-            _signalRService = new SignalRService("http://100.67.94.18:5042/chathub");
+             _signalRService = new SignalRService("http://100.67.94.18:5042/chathub");
+            //_signalRService = new SignalRService("http://127.0.0.1:5042/chathub");
 
             // 2. Lắng nghe sự kiện nhắn tin tới
             _signalRService.OnReceiveMessage += SignalR_OnReceiveMessage;
             _signalRService.OnReceiveMessageDeletion += SignalR_OnReceiveMessageDeletion;
+            _signalRService.OnMessagesMarkedAsRead += SignalR_OnMessagesMarkedAsRead;
 
             // 3. Tự động Connect
             this.Loaded += async (s, e) => {
@@ -74,13 +76,7 @@ namespace Hermes
             {
                 Dispatcher.Invoke(() =>
                 {
-                    // GỌI LẠI HÀM TẢI DANH SÁCH CHAT
-                    // Bỏ chữ 'await' đi vì hàm này là void
                     LoadRealChatsAsync();
-                    if (lstChats != null && lstChats.SelectedItem != null)
-                    {
-                        lstChats_SelectionChanged(lstChats, null);
-                    }
                 });
             };
             _signalRService.OnUserStatusChanged += (userId, isOnline) =>
@@ -185,53 +181,85 @@ namespace Hermes
         // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
         private void SignalR_OnReceiveMessage(string conversationId, string cipherText, Dictionary<string, string> recipientKeys, int ttl, int msgId)
         {
+            Application.Current.Dispatcher.InvokeAsync(async () =>
+            {
+                var targetChat = Chats.FirstOrDefault(c => c.ChatId == conversationId);
+                if (targetChat == null)
+                {
+                    await LoadRealChatsAsync();
+                    targetChat = Chats.FirstOrDefault(c => c.ChatId == conversationId);
+                    if (targetChat == null) return;
+                }
+
+                if (msgId > 0 && targetChat.Messages.Any(m => m.MessageId == msgId)) return;
+
+                string plainText = "[Tin nhắn mã hóa]";
+                string senderName = targetChat.ChatName ?? "Friend";
+
+                if (cipherText.StartsWith("⚠️"))
+                {
+                    plainText = cipherText;
+                    senderName = "Hệ thống";
+                }
+                else if (recipientKeys != null && recipientKeys.TryGetValue(AuthService.CurrentUserId, out string myEncryptedSessionKey))
+                {
+                    try
+                    {
+                        byte[] aesKey = Backend.Services.CryptoService.DecryptSessionKeyWithRSA(myEncryptedSessionKey, AuthService.CurrentPrivateKey);
+                        plainText = Backend.Services.CryptoService.DecryptWithAES(cipherText, aesKey);
+                    }
+                    catch { plainText = "[Lỗi giải mã E2EE]"; }
+                }
+
+                bool isCurrentChat = (lstChats.SelectedItem is ChatModel currentChat && currentChat.ChatId == conversationId);
+
+                var newMsg = new MessageModel
+                {
+                    MessageId = msgId,
+                    SenderName = senderName,
+                    Content = plainText,
+                    Time = DateTime.Now.ToString("hh:mm tt"),
+                    IsMine = false,
+                    TimeToLive = ttl,
+                    IsRead = isCurrentChat
+                };
+                targetChat.Messages.Add(newMsg);
+                targetChat.LastMessage = plainText;
+                targetChat.LastMessageTime = newMsg.Time;
+
+                if (isCurrentChat)
+                {
+                    svMessages?.ScrollToEnd();
+                    _ = Backend.Services.ApiClient.MarkMessagesAsReadAsync(int.Parse(conversationId), AuthService.CurrentUserId);
+                    _ = _signalRService.NotifyMessagesReadAsync(conversationId, AuthService.CurrentUserId);
+                    targetChat.IsRead = true;
+                }
+                else
+                {
+                    targetChat.IsRead = false;
+                }
+
+                if (ttl > 0)
+                {
+                    newMsg.StartCountdown(async (expiredMsg) =>
+                    {
+                        Application.Current.Dispatcher.Invoke(() => targetChat.Messages.Remove(expiredMsg));
+                        await Backend.Services.ApiClient.DeleteMessageAsync(expiredMsg.MessageId);
+                    });
+                }
+            });
+        }
+
+        private void SignalR_OnMessagesMarkedAsRead(string conversationId, string readerId)
+        {
             Application.Current.Dispatcher.Invoke(() =>
             {
                 var targetChat = Chats.FirstOrDefault(c => c.ChatId == conversationId);
                 if (targetChat != null)
                 {
-                    string plainText = "[Tin nhắn mã hóa]";
-                    string senderName = "Friend";
-
-                    if (cipherText.StartsWith("⚠️"))
+                    foreach (var m in targetChat.Messages.Where(m => m.IsMine))
                     {
-                        plainText = cipherText;
-                        senderName = "Hệ thống";
-                    }
-                    else if (recipientKeys != null && recipientKeys.TryGetValue(AuthService.CurrentUserId, out string myEncryptedSessionKey))
-                    {
-                        try
-                        {
-                            byte[] aesKey = Backend.Services.CryptoService.DecryptSessionKeyWithRSA(myEncryptedSessionKey, AuthService.CurrentPrivateKey);
-                            plainText = Backend.Services.CryptoService.DecryptWithAES(cipherText, aesKey);
-                        }
-                        catch { plainText = "[Lỗi giải mã E2EE]"; }
-                    }
-
-                    var newMsg = new MessageModel
-                    {
-                        MessageId = msgId,
-                        SenderName = senderName,
-                        Content = plainText,
-                        Time = DateTime.Now.ToString("hh:mm tt"),
-                        IsMine = false,
-                        TimeToLive = ttl
-                    };
-                    targetChat.Messages.Add(newMsg);
-
-                    if (ttl > 0)
-                    {
-                        newMsg.StartCountdown(async (expiredMsg) =>
-                        {
-                            Application.Current.Dispatcher.Invoke(() => targetChat.Messages.Remove(expiredMsg));
-                            await Backend.Services.ApiClient.DeleteMessageAsync(expiredMsg.MessageId);
-                        });
-                    }
-
-                    // Nếu phòng đó ĐANG ĐƯỢC MỞ trên màn hình, thì cuộn xuống
-                    if (lstChats.SelectedItem is ChatModel currentChat && currentChat.ChatId == conversationId)
-                    {
-                        svMessages.ScrollToEnd();
+                        m.IsRead = true;
                     }
                 }
             });
@@ -250,7 +278,7 @@ namespace Hermes
             });
         }
 
-        private async void LoadRealChatsAsync()
+        private async Task LoadRealChatsAsync()
         {
             var myChats = await Backend.Services.ApiClient.GetMyChatsAsync(AuthService.CurrentUserId);
             if (myChats == null) return;
@@ -288,7 +316,8 @@ namespace Hermes
                     Initials = c.IsGroup ? "G" : (string.IsNullOrEmpty(displayName) ? "" : displayName.Substring(0, 1).ToUpper()),
                     AvatarColor = c.IsGroup ? "#10B981" : "#F59E0B",
                     LastMessage = "Bấm để xem tin nhắn...",
-                    LastMessageTime = ""
+                    LastMessageTime = "",
+                    IsRead = c.IsRead
                 };
 
                 AddOrUpdateChat(incoming, joinRoom: false);
@@ -324,6 +353,7 @@ namespace Hermes
         {
             if (lstChats.SelectedItem is ChatModel selectedChat)
             {
+                selectedChat.IsRead = true;
                 if (GridWelcome != null) GridWelcome.Visibility = Visibility.Collapsed;
                 if (GridChat != null) GridChat.Visibility = Visibility.Visible;
 
@@ -370,17 +400,18 @@ namespace Hermes
                 // --- KÍCH HOẠT LOGIC "ĐÃ XEM" (READ RECEIPTS) ---
                 try
                 {
-                    // 1. Gọi qua ApiClient cho gọn
-                    await Backend.Services.ApiClient.MarkMessagesAsReadAsync(int.Parse(selectedChat.ChatId), AuthService.CurrentUserId);
-
-                    // 2. Báo cho đối phương biết qua SignalR
-                    await _signalRService.NotifyMessagesReadAsync(selectedChat.ChatId, AuthService.CurrentUserId);
-
-                    // 3. Cập nhật trạng thái tick xanh ngay lập tức trên UI của mình
-                    foreach (var m in selectedChat.Messages.Where(m => m.IsMine))
+                    // 1. Cập nhật trạng thái ngay lập tức trên UI của mình
+                    foreach (var m in selectedChat.Messages.Where(m => !m.IsMine))
                     {
                         m.IsRead = true;
                     }
+                    selectedChat.IsRead = true;
+
+                    // 2. Gọi qua ApiClient không chặn UI
+                    _ = Backend.Services.ApiClient.MarkMessagesAsReadAsync(int.Parse(selectedChat.ChatId), AuthService.CurrentUserId);
+
+                    // 3. Báo cho đối phương biết qua SignalR
+                    _ = _signalRService.NotifyMessagesReadAsync(selectedChat.ChatId, AuthService.CurrentUserId);
                 }
                 catch (Exception ex)
                 {
@@ -881,6 +912,7 @@ namespace Hermes
                 var inserted = AddOrUpdateChat(newChat, joinRoom: false);
                 if (inserted != null) lstChats.SelectedItem = inserted;
                 await _signalRService.JoinRoomAsync(newConvId.ToString());
+                await _signalRService.SendNewChatNotificationAsync(userIds);
             }
             catch (Exception ex)
             {
@@ -956,10 +988,11 @@ namespace Hermes
             if (existing != null)
             {
                 // ĐÃ CÓ → chỉ cập nhật nội dung hiển thị, KHÔNG thêm dòng mới
-                if (!string.IsNullOrEmpty(incoming.LastMessage))
+                if (!string.IsNullOrEmpty(incoming.LastMessage) && incoming.LastMessage != "Bấm để xem tin nhắn...")
                     existing.LastMessage = incoming.LastMessage;
                 if (!string.IsNullOrEmpty(incoming.LastMessageTime))
                     existing.LastMessageTime = incoming.LastMessageTime;
+                existing.IsRead = incoming.IsRead;
                 return existing;
             }
 

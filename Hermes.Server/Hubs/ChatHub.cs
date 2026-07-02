@@ -84,11 +84,24 @@ namespace Hermes.Server.Hubs
             await Groups.AddToGroupAsync(Context.ConnectionId, conversationId);
         }
 
-        // --- CÁC HÀM CŨ GIỮ NGUYÊN ---
-        // Đổi tham số hàm SendMessage
         public async Task SendMessage(string conversationId, string encryptedMessage, Dictionary<string, string> recipientKeys, int timeToLive = 0, int messageId = 0)
         {
-            // Bắn cả dictionary khóa qua mạng
+            _connectionUserMap.TryGetValue(Context.ConnectionId, out string? senderId);
+            if (recipientKeys != null && recipientKeys.Count > 0)
+            {
+                foreach (var recipientId in recipientKeys.Keys)
+                {
+                    if (_userConnections.TryGetValue(recipientId, out var connections))
+                    {
+                        List<string> targets;
+                        lock (connections) { targets = new List<string>(connections); }
+                        foreach (var connId in targets)
+                        {
+                            await Groups.AddToGroupAsync(connId, conversationId);
+                        }
+                    }
+                }
+            }
             await Clients.OthersInGroup(conversationId).SendAsync("ReceiveMessage", conversationId, encryptedMessage, recipientKeys, timeToLive, messageId);
         }
 

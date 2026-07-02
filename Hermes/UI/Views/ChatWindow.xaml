@@ -347,8 +347,8 @@
                                     <TextBlock Text="{Binding Initials}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18"/>
                                 </Grid>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding ChatName}" FontWeight="Bold" FontSize="14" Foreground="#1F2937"/>
-                                    <TextBlock Text="{Binding LastMessage}" Foreground="#6B7280" FontSize="12" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding ChatName}" FontWeight="{Binding ChatNameFontWeight}" FontSize="14" Foreground="{Binding ChatNameColor}"/>
+                                    <TextBlock Text="{Binding LastMessage}" FontWeight="{Binding LastMessageFontWeight}" Foreground="{Binding LastMessageColor}" FontSize="12" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                                 <TextBlock Grid.Column="2" Text="{Binding LastMessageTime}" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Top"/>
                             </Grid>
@@ -438,7 +438,7 @@
                                                 </Border>
                                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,5,0">
                                                     <TextBlock Text="{Binding Time}" FontSize="10" Foreground="#9CA3AF" Margin="0,0,5,0"/>
-                                                    <TextBlock Text="✓✓" FontSize="10" Foreground="{Binding ReadStatusColor}" FontWeight="Bold"/>
+                                                    <TextBlock Text="{Binding ReadStatusIcon}" FontSize="10" Foreground="{Binding ReadStatusColor}" FontWeight="Bold"/>
                                                 </StackPanel>
                                             </StackPanel>
                                         </Grid>

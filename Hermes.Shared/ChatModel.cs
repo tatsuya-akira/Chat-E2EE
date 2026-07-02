@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text.Json.Serialization;
+using Hermes.Shared.Converters;
 
 namespace Hermes.Shared.Models
 {
@@ -26,6 +28,7 @@ namespace Hermes.Shared.Models
             }
         }
         private bool _isRead;
+        [JsonConverter(typeof(NumberToBooleanConverter))]
         public bool IsRead
         {
             get => _isRead;
@@ -36,11 +39,13 @@ namespace Hermes.Shared.Models
                     _isRead = value;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(ReadStatusColor));
+                    OnPropertyChanged(nameof(ReadStatusIcon));
                 }
             }
         }
 
         public string ReadStatusColor => IsRead ? "#3B82F6" : "#9CA3AF";
+        public string ReadStatusIcon => IsRead ? "✓✓" : "✓";
 
         public string? Time { get; set; }
         public bool IsMine { get; set; }
@@ -146,13 +151,30 @@ namespace Hermes.Shared.Models
             get => _isOnline;
             set { _isOnline = value; OnPropertyChanged(); OnPropertyChanged(nameof(StatusText)); OnPropertyChanged(nameof(StatusColor)); }
         }
-        private bool _isRead;
+        private bool _isRead = true;
+        [JsonConverter(typeof(NumberToBooleanConverter))]
         public bool IsRead
         {
             get => _isRead;
-            set { _isRead = value; OnPropertyChanged(); OnPropertyChanged(nameof(ReadStatusColor)); }
+            set
+            {
+                if (_isRead != value)
+                {
+                    _isRead = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(ReadStatusColor));
+                    OnPropertyChanged(nameof(ChatNameFontWeight));
+                    OnPropertyChanged(nameof(ChatNameColor));
+                    OnPropertyChanged(nameof(LastMessageFontWeight));
+                    OnPropertyChanged(nameof(LastMessageColor));
+                }
+            }
         }
         public string ReadStatusColor => IsRead ? "#3B82F6" : "#9CA3AF"; // Xanh (Đã xem), Xám (Đã nhận)
+        public string ChatNameFontWeight => !IsRead ? "Bold" : "SemiBold";
+        public string ChatNameColor => !IsRead ? "#111827" : "#374151";
+        public string LastMessageFontWeight => !IsRead ? "Bold" : "Normal";
+        public string LastMessageColor => !IsRead ? "#111827" : "#6B7280";
         public string StatusText => IsOnline ? "Đang hoạt động" : "Ngoại tuyến";
         public string StatusColor => IsOnline ? "#10B981" : "#9CA3AF"; // Xanh ngọc hoặc Xám
 

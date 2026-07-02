@@ -17,6 +17,7 @@ namespace Hermes.Backend.Services
         public event Action OnCallEnded;                          // Cúp máy
         public event Action<string, bool> OnUserStatusChanged;
         public event Action<string, int> OnReceiveMessageDeletion;
+        public event Action<string, string> OnMessagesMarkedAsRead;
 
         public SignalRService(string hubUrl)
         {
@@ -28,6 +29,11 @@ namespace Hermes.Backend.Services
             _connection.On<string, string, Dictionary<string, string>, int, int>("ReceiveMessage", (conversationId, encryptedMessage, recipientKeys, ttl, msgId) =>
             {
                 OnReceiveMessage?.Invoke(conversationId, encryptedMessage, recipientKeys, ttl, msgId);
+            });
+
+            _connection.On<string, string>("MessagesMarkedAsRead", (conversationId, readerId) =>
+            {
+                OnMessagesMarkedAsRead?.Invoke(conversationId, readerId);
             });
 
             _connection.On<string, string, int>("IncomingCall", (callerId, ip, port) =>
@@ -56,8 +62,14 @@ namespace Hermes.Backend.Services
             _connection.On("CallEnded", () => OnCallEnded?.Invoke());
         }
 
+        private string _currentUserId;
+
         public async Task ConnectAsync(string userId)
         {
+            _currentUserId = userId;
+            _connection.Reconnected -= SignalR_Reconnected;
+            _connection.Reconnected += SignalR_Reconnected;
+
             try
             {
                 await _connection.StartAsync();
@@ -66,6 +78,14 @@ namespace Hermes.Backend.Services
             catch (Exception ex)
             {
                 Console.WriteLine($"Error connecting to SignalR: {ex.Message}");
+            }
+        }
+
+        private async Task SignalR_Reconnected(string? connectionId)
+        {
+            if (!string.IsNullOrEmpty(_currentUserId))
+            {
+                try { await _connection.InvokeAsync("RegisterUser", _currentUserId); } catch { }
             }
         }
 

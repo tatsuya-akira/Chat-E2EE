@@ -109,7 +109,12 @@ namespace Hermes.Server.Controllers
                                 c.IsGroup, 
                                 c.GroupName,
                                 (SELECT i.FullName FROM PARTICIPANTS p2 JOIN USERINFO i ON p2.UserId = i.UserId WHERE p2.ConversationId = c.Id AND p2.UserId != @UserId LIMIT 1) as OtherUserName,
-                                (SELECT p2.UserId FROM PARTICIPANTS p2 WHERE p2.ConversationId = c.Id AND p2.UserId != @UserId LIMIT 1) as OtherUserId 
+                                (SELECT p2.UserId FROM PARTICIPANTS p2 WHERE p2.ConversationId = c.Id AND p2.UserId != @UserId LIMIT 1) as OtherUserId,
+                                NOT EXISTS (
+                                    SELECT 1 FROM MESSAGES m 
+                                    JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId 
+                                    WHERE m.ConversationId = c.Id AND mr.RecipientId = @UserId AND mr.IsRead = 0 AND m.SenderId != @UserId
+                                ) as IsRead
                             FROM CONVERSATIONS c
                             JOIN PARTICIPANTS p ON c.Id = p.ConversationId
                             WHERE p.UserId = @UserId

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 using Dapper;
 using Hermes.Shared.DTOs;
+using Hermes.Shared.Models;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 
@@ -66,14 +67,19 @@ namespace Hermes.Server.Controllers
             string query = @"
                 SELECT m.Id as MessageId, m.SenderId, IFNULL(i.FullName, 'Hệ thống') as SenderName, m.CipherText as Content, 
                        DATE_FORMAT(m.SentAt, '%h:%i %p') as Time, 
-                       mr.EncryptedSessionKey, mr.IsRead, m.TimeToLive
+                       mr.EncryptedSessionKey, 
+                       CASE 
+                           WHEN m.SenderId = @UserId THEN IFNULL((SELECT MIN(mr2.IsRead) FROM MESSAGE_RECIPIENTS mr2 WHERE mr2.MessageId = m.Id AND mr2.RecipientId != @UserId), 0)
+                           ELSE mr.IsRead
+                       END as IsRead,
+                       m.TimeToLive
                 FROM MESSAGES m
                 LEFT JOIN USERINFO i ON m.SenderId = i.UserId
                 JOIN MESSAGE_RECIPIENTS mr ON m.Id = mr.MessageId
                 WHERE m.ConversationId = @ConvId AND mr.RecipientId = @UserId
                 ORDER BY m.SentAt ASC";
 
-            var history = await connection.QueryAsync(query, new { ConvId = conversationId, UserId = userId });
+            var history = await connection.QueryAsync<MessageModel>(query, new { ConvId = conversationId, UserId = userId });
             return Ok(history);
         }
 
