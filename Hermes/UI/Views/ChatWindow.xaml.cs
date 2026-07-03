@@ -98,6 +98,22 @@ namespace Hermes
                     }
                 });
             };
+            // Lắng nghe khi đối phương vừa xem tin nhắn của mình
+            _signalRService.OnMessagesMarkedAsRead += (convId, readerId) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    var targetChat = Chats.FirstOrDefault(c => c.ChatId == convId);
+                    if (targetChat != null)
+                    {
+                        // BÂY GIỜ MỚI ĐÚNG NÀY: Người kia xem -> Đổi TẤT CẢ tin của mình thành tick xanh
+                        foreach (var msg in targetChat.Messages.Where(m => m.IsMine))
+                        {
+                            msg.IsRead = true;
+                        }
+                    }
+                });
+            };
             _webRTCService = new Hermes.Client.Services.WebRTCService();
 
             // Khi WebRTC tạo xong tín hiệu, đẩy nó qua SignalR
@@ -166,6 +182,7 @@ namespace Hermes
                     }
                 });
             };
+
         }
         private async Task HandleEndCallLogic()
         {
@@ -185,7 +202,7 @@ namespace Hermes
         // --- HÀM NÀY ĐÃ ĐƯỢC FIX ĐỂ NHẬN TIN NHẮN REAL-TIME CHUẨN XÁC ---
         private void SignalR_OnReceiveMessage(string conversationId, string cipherText, Dictionary<string, string> recipientKeys, int ttl, int msgId)
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.Invoke(async() =>
             {
                 var targetChat = Chats.FirstOrDefault(c => c.ChatId == conversationId);
                 if (targetChat != null)
@@ -228,10 +245,21 @@ namespace Hermes
                         });
                     }
 
-                    // Nếu phòng đó ĐANG ĐƯỢC MỞ trên màn hình, thì cuộn xuống
                     if (lstChats.SelectedItem is ChatModel currentChat && currentChat.ChatId == conversationId)
                     {
+                        // 1. Cuộn xuống cuối
                         svMessages.ScrollToEnd();
+
+                        // 2. Tự động đánh dấu là Đã xem ngay lập tức
+                        try
+                        {
+                            await Backend.Services.ApiClient.MarkMessagesAsReadAsync(int.Parse(conversationId), AuthService.CurrentUserId);
+                            await _signalRService.NotifyMessagesReadAsync(conversationId, AuthService.CurrentUserId);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Lỗi báo đã xem real-time: {ex.Message}");
+                        }
                     }
                 }
             });
@@ -370,17 +398,11 @@ namespace Hermes
                 // --- KÍCH HOẠT LOGIC "ĐÃ XEM" (READ RECEIPTS) ---
                 try
                 {
-                    // 1. Gọi qua ApiClient cho gọn
+                    // 1. Gọi qua ApiClient cập nhật Database
                     await Backend.Services.ApiClient.MarkMessagesAsReadAsync(int.Parse(selectedChat.ChatId), AuthService.CurrentUserId);
 
                     // 2. Báo cho đối phương biết qua SignalR
                     await _signalRService.NotifyMessagesReadAsync(selectedChat.ChatId, AuthService.CurrentUserId);
-
-                    // 3. Cập nhật trạng thái tick xanh ngay lập tức trên UI của mình
-                    foreach (var m in selectedChat.Messages.Where(m => m.IsMine))
-                    {
-                        m.IsRead = true;
-                    }
                 }
                 catch (Exception ex)
                 {

@@ -17,6 +17,7 @@ namespace Hermes.Backend.Services
         public event Action OnCallEnded;                          // Cúp máy
         public event Action<string, bool> OnUserStatusChanged;
         public event Action<string, int> OnReceiveMessageDeletion;
+        public event Action<string, string> OnMessagesMarkedAsRead;
 
         public SignalRService(string hubUrl)
         {
@@ -54,6 +55,7 @@ namespace Hermes.Backend.Services
             _connection.On<string>("ReceiveWebRTCAnswer", (answer) => OnReceiveWebRTCAnswer?.Invoke(answer));
             _connection.On<string>("ReceiveIceCandidate", (candidate) => OnReceiveIceCandidate?.Invoke(candidate));
             _connection.On("CallEnded", () => OnCallEnded?.Invoke());
+            _connection.On<string, string>("MessagesMarkedAsRead", (conversationId, userId) => OnMessagesMarkedAsRead?.Invoke(conversationId, userId));
         }
 
         public async Task ConnectAsync(string userId)
@@ -118,6 +120,7 @@ namespace Hermes.Backend.Services
         public async Task SendWebRTCAnswerAsync(string targetId, string answer) => await _connection.InvokeAsync("SendWebRTCAnswer", targetId, answer);
         public async Task SendIceCandidateAsync(string targetId, string candidate) => await _connection.InvokeAsync("SendIceCandidate", targetId, candidate);
         public async Task EndCallAsync(string targetId) => await _connection.InvokeAsync("EndCall", targetId);
+
         public async Task NotifyDeleteMessageAsync(string conversationId, int messageId)
         {
             if (_connection.State == HubConnectionState.Connected)
