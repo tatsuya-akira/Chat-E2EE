@@ -1,6 +1,6 @@
 ﻿# Hermes Chat App
 
-Một ứng dụng nhắn tin bảo mật trên Desktop (WPF) với trọng tâm là tính năng **Mã hóa đầu cuối (End-to-End Encryption - E2EE)** và **Mật khẩu giả (Duress Password)**.
+Một ứng dụng nhắn tin bảo mật trên Desktop (WPF) với trọng tâm là tính năng **Mã hóa đầu cuối (End-to-End Encryption - E2EE)**.
 
 ## Giới thiệu
 Hermes Chat App được xây dựng với mục tiêu cung cấp một nền tảng giao tiếp an toàn, bảo vệ dữ liệu người dùng ngay từ thiết bị cá nhân. Dự án áp dụng các chuẩn mật mã học hiện đại như RSA, AES-GCM và cơ chế Key Wrapping (PBKDF2) để đảm bảo không ai - kể cả máy chủ - có thể đọc được nội dung tin nhắn.
