@@ -59,5 +59,4 @@ Hermes Chat App được xây dựng với mục tiêu cung cấp một nền t�
 https://docs.google.com/spreadsheets/d/1RXGLQFEikIs9vv7t25ES2CM7M_rmdpR-917V4to-uk0/edit?usp=sharing
 
 ## Slide
-[https://docs.google.com/presentation/d/1b1WLuwVSy8TrGT1UOAMH2FUqwdN6yVwTa9k4R5p3i6A/edit?slide=id.p1#slide=id.p1
-](https://gamma.app/docs/o-an-mon-hoc-Lap-trinh-mang-can-ban-NT106Q22ANTT-Hermes-Chat--a3avd7h28i8c7nk?mode=doc)
+https://gamma.app/docs/o-an-mon-hoc-Lap-trinh-mang-can-ban-NT106Q22ANTT-Hermes-Chat--a3avd7h28i8c7nk?mode=doc
