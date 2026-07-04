@@ -54,7 +54,7 @@ namespace Hermes
             }
 
             // 1. Khởi tạo SignalR
-            _signalRService = new SignalRService("http://100.67.94.18:5042/chathub");
+            _signalRService = new SignalRService("http://100.83.55.117:5042/chathub");
 
             // 2. Lắng nghe sự kiện nhắn tin tới
             _signalRService.OnReceiveMessage += SignalR_OnReceiveMessage;
@@ -75,7 +75,6 @@ namespace Hermes
                 Dispatcher.Invoke(() =>
                 {
                     // GỌI LẠI HÀM TẢI DANH SÁCH CHAT
-                    // Bỏ chữ 'await' đi vì hàm này là void
                     LoadRealChatsAsync();
                     if (lstChats != null && lstChats.SelectedItem != null)
                     {
