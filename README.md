@@ -10,7 +10,7 @@ Hermes Chat App được xây dựng với mục tiêu cung cấp một nền t�
 ### 1. Giao diện & Trải nghiệm
 - **Cơ sở hạ tầng Auth:** Đăng nhập, Đăng ký, Quên mật khẩu qua Firebase Auth.
 - **Bảo toàn dữ liệu:** Tự động Rollback (xóa user Firebase) nếu lưu trữ xuống MySQL thất bại.
-- **UI/UX (WPF MVVM):** Giao diện Chat trực quan với hiệu ứng bong bóng tin nhắn (Chat bubbles), phân biệt lề trái/phải.
+- **UI/UX:** Giao diện Chat trực quan.
 - **Quản lý danh bạ:** Khởi tạo chat cá nhân và chat nhóm.
 - **Bảo mật cục bộ:** Quản lý cấu hình qua biến môi trường (`.env`), tránh lộ API Key.
 
