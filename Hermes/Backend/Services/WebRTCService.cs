@@ -16,7 +16,7 @@ namespace Hermes.Client.Services
         private RTCPeerConnection _peerConnection;
 
         // ==========================================
-        // VŨ KHÍ TỐI THƯỢNG: NAUDIO (KIỂM SOÁT PHẦN CỨNG)
+        // NAUDIO
         // ==========================================
         private WaveInEvent _waveIn;
         private WaveOutEvent _waveOut;
